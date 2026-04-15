@@ -31,7 +31,7 @@ interface Lead {
   created_at: string;
 }
 
-export default function LeadDetail({ params }: any) {
+export default function LeadDetail({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const leadId = resolvedParams?.id;
   const [lead, setLead] = useState<Lead | null>(null);
