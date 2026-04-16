@@ -167,6 +167,46 @@ const getSignalInfo = (signalType: string) => {
   };
 };
 
+interface ScoreBreakdown {
+  intentTotal: number | null;
+  intentMax: number;
+  evidenceTotal: number | null;
+  evidenceMax: number;
+  items: { category: string; label: string; delta: number; running: number }[];
+}
+
+const parseScoreBreakdown = (scoreComment?: string): ScoreBreakdown | null => {
+  if (!scoreComment) return null;
+  const intentMatch = scoreComment.match(/intent\s+([\d.]+)\/([\d]+)/i);
+  const evidenceMatch = scoreComment.match(/[Ee]vidence\s+([\d.]+)\/([\d]+)/i);
+  const items: ScoreBreakdown["items"] = [];
+  const itemRegex = /(intent|evidence):\s*([^+\-\n]+?)\s*([+-][\d.]+)\s*->\s*([\d.]+)/gi;
+  let match;
+  while ((match = itemRegex.exec(scoreComment)) !== null) {
+    items.push({
+      category: match[1].toLowerCase(),
+      label: match[2].trim(),
+      delta: parseFloat(match[3]),
+      running: parseFloat(match[4]),
+    });
+  }
+  if (!intentMatch && !evidenceMatch && items.length === 0) return null;
+  return {
+    intentTotal: intentMatch ? parseFloat(intentMatch[1]) : null,
+    intentMax: intentMatch ? parseInt(intentMatch[2]) : 70,
+    evidenceTotal: evidenceMatch ? parseFloat(evidenceMatch[1]) : null,
+    evidenceMax: evidenceMatch ? parseInt(evidenceMatch[2]) : 30,
+    items,
+  };
+};
+
+const getScoreNarrative = (scoreComment?: string): string | undefined => {
+  if (!scoreComment) return undefined;
+  const idx = scoreComment.indexOf("Score breakdown:");
+  const narrative = idx === -1 ? scoreComment : scoreComment.substring(0, idx).trim();
+  return narrative || undefined;
+};
+
 /* ── Component ── */
 
 export default function LeadsPage() {
@@ -176,6 +216,7 @@ export default function LeadsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [error, setError] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [detailsExpandedId, setDetailsExpandedId] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   // Add Lead drawer
@@ -527,228 +568,253 @@ export default function LeadsPage() {
                     </tr>
 
                     {/* ── Expanded detail panel ── */}
-                    {expandedId === lead.id && (
-                      <tr className="border-b border-orange-100 bg-gradient-to-b from-orange-50/30 to-gray-50/40">
-                        <td colSpan={8} className="px-6 py-5">
-                          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    {expandedId === lead.id && (() => {
+                      const bd = parseScoreBreakdown(lead.score_comment);
+                      const narrative = getScoreNarrative(lead.score_comment);
+                      const intentItems = bd?.items.filter((x) => x.category === "intent") ?? [];
+                      const evidenceItems = bd?.items.filter((x) => x.category === "evidence") ?? [];
+                      return (
+                        <tr className="border-b border-orange-100 bg-gradient-to-b from-orange-50/20 to-white">
+                          <td colSpan={8} className="px-6 py-5">
 
-                            {/* Column 1 – AI Analysis */}
-                            <div className="space-y-3">
-                              <h4 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
-                                <Brain className="w-3.5 h-3.5 text-orange-400" />
-                                AI Analysis
-                              </h4>
+                            {/* ── Level 0: Side-by-side primary view ── */}
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-                              {lead.ai_reason && (
-                                <div className="bg-white rounded-lg border border-gray-200 p-3">
-                                  <p className="text-[11px] font-semibold text-gray-500 mb-1">
-                                    AI Reason
-                                  </p>
-                                  <p className="text-xs text-gray-700 leading-relaxed">
-                                    {lead.ai_reason}
-                                  </p>
-                                </div>
-                              )}
-
-                              {lead.score_comment && (
-                                <div className="bg-white rounded-lg border border-gray-200 p-3">
-                                  <p className="text-[11px] font-semibold text-gray-500 mb-1">
-                                    Score Rationale
-                                  </p>
-                                  <p className="text-xs text-gray-700 leading-relaxed">
-                                    {lead.score_comment}
-                                  </p>
-                                </div>
-                              )}
-
-                              {lead.sales_strategy && (
-                                <div className="bg-orange-50 rounded-lg border border-orange-200 p-3">
-                                  <p className="text-[11px] font-semibold text-orange-600 mb-1 flex items-center gap-1">
-                                    <Target className="w-3 h-3" /> Sales Strategy
-                                  </p>
-                                  <p className="text-xs text-gray-700 leading-relaxed">
-                                    {lead.sales_strategy}
-                                  </p>
-                                </div>
-                              )}
-
-                              {/* All offerings */}
-                              {lead.recommended_offerings && lead.recommended_offerings.length > 0 && (
-                                <div className="bg-white rounded-lg border border-gray-200 p-3">
-                                  <p className="text-[11px] font-semibold text-gray-500 mb-2">
-                                    All Recommended Offerings
-                                  </p>
-                                  <div className="flex flex-wrap gap-1">
-                                    {lead.recommended_offerings.map((o, idx) => (
-                                      <span
-                                        key={idx}
-                                        className={`px-2 py-0.5 rounded text-xs font-medium ${getOfferingColor(idx)}`}
-                                      >
-                                        {o}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Column 2 – Evidence */}
-                            <div className="space-y-3">
-                              <h4 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
-                                <Zap className="w-3.5 h-3.5 text-orange-400" />
-                                Evidence Cards ({lead.evidence_cards?.length ?? 0})
-                              </h4>
-
-                              {lead.evidence_cards && lead.evidence_cards.length > 0 ? (
-                                lead.evidence_cards.map((card, i) => {
-                                  const sig = getSignalInfo(card.signal_type);
-                                  const { cls, Icon: StrIcon } = getStrengthStyle(card.strength);
-                                  return (
-                                    <div
-                                      key={i}
-                                      className="bg-white rounded-lg border border-gray-200 p-3"
-                                    >
-                                      <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
-                                        <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${sig.cls}`}>
-                                          {sig.label}
-                                        </span>
-                                        <div className="flex items-center gap-1.5">
-                                          <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5 ${cls}`}>
-                                            <StrIcon className="w-3 h-3" />
-                                            {card.strength}
-                                          </span>
-                                          <span
-                                            className={`text-xs font-bold ${
-                                              card.points >= 0 ? "text-green-600" : "text-red-600"
-                                            }`}
-                                          >
-                                            {card.points >= 0 ? "+" : ""}{card.points} pts
-                                          </span>
-                                        </div>
-                                      </div>
-                                      <p className="text-xs text-gray-700 leading-relaxed">
-                                        {card.reason}
-                                      </p>
-                                      {card.source_excerpt && (
-                                        <p className="mt-1.5 text-[11px] text-gray-400 italic border-l-2 border-gray-200 pl-2 line-clamp-2">
-                                          "{card.source_excerpt}"
-                                        </p>
-                                      )}
-                                      {card.source_url && (
-                                        <a
-                                          href={card.source_url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="mt-1.5 text-xs text-blue-600 hover:underline flex items-center gap-0.5"
-                                          onClick={(e) => e.stopPropagation()}
-                                        >
-                                          <ExternalLink className="w-3 h-3" /> View source
-                                        </a>
-                                      )}
-                                    </div>
-                                  );
-                                })
-                              ) : (
-                                <p className="text-xs text-gray-400">No evidence cards available.</p>
-                              )}
-                            </div>
-
-                            {/* Column 3 – Lead Details & Metadata */}
-                            <div className="space-y-3">
-                              <h4 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
-                                <FileText className="w-3.5 h-3.5 text-orange-400" />
-                                Lead Details
-                              </h4>
-
-                              {lead.comments && (
-                                <div className="bg-white rounded-lg border border-gray-200 p-3">
-                                  <p className="text-[11px] font-semibold text-gray-500 mb-1 flex items-center gap-1">
-                                    <MessageSquare className="w-3 h-3" /> Comments
-                                  </p>
-                                  <p className="text-xs text-gray-700 leading-relaxed">
-                                    {lead.comments}
-                                  </p>
-                                </div>
-                              )}
-
-                              {lead.knowledge && (
-                                <div className="bg-white rounded-lg border border-gray-200 p-3">
-                                  <p className="text-[11px] font-semibold text-gray-500 mb-1 flex items-center gap-1">
-                                    <Globe className="w-3 h-3" /> Knowledge Base
-                                  </p>
-                                  <p className="text-xs text-gray-600 leading-relaxed line-clamp-5">
-                                    {lead.knowledge}
-                                  </p>
-                                </div>
-                              )}
-
-                              {lead.knowledge_sources && lead.knowledge_sources.length > 0 && (
-                                <div className="bg-white rounded-lg border border-gray-200 p-3">
-                                  <p className="text-[11px] font-semibold text-gray-500 mb-1">
-                                    Knowledge Sources ({lead.knowledge_sources.length})
-                                  </p>
-                                  <div className="space-y-1">
-                                    {lead.knowledge_sources.map((src, i) => (
-                                      <a
-                                        key={i}
-                                        href={src}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-xs text-blue-600 hover:underline flex items-center gap-0.5"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                                        <span className="truncate">{src}</span>
-                                      </a>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Metadata */}
-                              <div className="bg-white rounded-lg border border-gray-200 p-3">
-                                <p className="text-[11px] font-semibold text-gray-500 mb-2">
-                                  Metadata
+                              {/* LEFT — Action: what to do */}
+                              <div className="space-y-3">
+                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                  <Target className="w-3 h-3 text-orange-400" /> Sales Strategy
                                 </p>
-                                <div className="space-y-1.5 text-xs">
-                                  <div className="flex justify-between">
-                                    <span className="text-gray-400">Lead ID</span>
-                                    <span className="font-mono text-gray-700">#{lead.id}</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-gray-400">Created</span>
-                                    <span className="text-gray-700">{formatDate(lead.created_at)}</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-gray-400">Web Evidence Used</span>
-                                    <span
-                                      className={`font-medium ${
-                                        lead.used_web_evidence ? "text-teal-600" : "text-amber-600"
-                                      }`}
-                                    >
-                                      {lead.used_web_evidence ? "Yes" : "No — Fallback"}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-gray-400">Evidence Cards</span>
-                                    <span className="text-gray-700">
-                                      {lead.evidence_cards?.length ?? 0}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-gray-400">Knowledge Sources</span>
-                                    <span className="text-gray-700">
-                                      {lead.knowledge_sources?.length ?? 0}
-                                    </span>
-                                  </div>
+                                <div className="bg-orange-50 rounded-xl border border-orange-200 p-4 space-y-3">
+                                  {lead.sales_strategy && (
+                                    <p className="text-xs text-gray-700 leading-relaxed">{lead.sales_strategy}</p>
+                                  )}
+                                  {lead.recommended_offerings && lead.recommended_offerings.length > 0 && (
+                                    <div>
+                                      <p className="text-[10px] text-orange-500 font-semibold uppercase tracking-wide mb-1.5">Pitch first</p>
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {lead.recommended_offerings.map((o, idx) => (
+                                          <span key={idx} className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${getOfferingColor(idx)}`}>
+                                            {o}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* RIGHT — Why: reasoning + score narrative */}
+                              <div className="space-y-3">
+                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                  <Brain className="w-3 h-3 text-orange-400" /> AI Analysis
+                                </p>
+                                <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+                                  {lead.ai_reason && (
+                                    <p className="text-xs font-medium text-gray-800 leading-relaxed">{lead.ai_reason}</p>
+                                  )}
+                                  {narrative && (
+                                    <p className="text-xs text-gray-500 leading-relaxed border-t border-gray-100 pt-3">{narrative}</p>
+                                  )}
                                 </div>
                               </div>
                             </div>
 
-                          </div>
-                        </td>
-                      </tr>
-                    )}
+                            {/* ── Show more divider ── */}
+                            <div className="mt-4 flex items-center gap-3">
+                              <div className="flex-1 h-px bg-orange-100" />
+                              <button
+                                className="flex items-center gap-1.5 text-[11px] font-semibold text-orange-500 hover:text-orange-700 px-3 py-1 rounded-full border border-orange-200 bg-white hover:bg-orange-50 transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDetailsExpandedId((prev) => prev === lead.id ? null : lead.id);
+                                }}
+                              >
+                                {detailsExpandedId === lead.id ? (
+                                  <><ChevronUp className="w-3 h-3" /> Hide evidence & details</>
+                                ) : (
+                                  <><ChevronDown className="w-3 h-3" /> Show evidence & details</>
+                                )}
+                              </button>
+                              <div className="flex-1 h-px bg-orange-100" />
+                            </div>
+
+                            {/* ── Level 1: Side-by-side deep-dive (cascaded) ── */}
+                            {detailsExpandedId === lead.id && (
+                              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+
+                                {/* LEFT — Evidence: how the score was built */}
+                                <div className="space-y-3">
+                                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                    <Zap className="w-3 h-3 text-orange-400" /> Evidence & Score Breakdown
+                                  </p>
+
+                                  {/* Score breakdown visual */}
+                                  {bd && (
+                                    <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                      <div className="space-y-3">
+                                        {bd.intentTotal !== null && (
+                                          <div>
+                                            <div className="flex justify-between items-center text-[11px] mb-1">
+                                              <span className="font-semibold text-orange-600 uppercase tracking-wide">Intent</span>
+                                              <span className="font-bold text-gray-700 tabular-nums">{bd.intentTotal} / {bd.intentMax}</span>
+                                            </div>
+                                            <div className="h-2 bg-orange-100 rounded-full overflow-hidden">
+                                              <div className="h-full bg-orange-400 rounded-full" style={{ width: `${(bd.intentTotal / bd.intentMax) * 100}%` }} />
+                                            </div>
+                                            {intentItems.length > 0 && (
+                                              <div className="mt-2 space-y-1 pl-1">
+                                                {intentItems.map((item, i) => (
+                                                  <div key={i} className="flex justify-between items-center text-[11px]">
+                                                    <span className="text-gray-400 capitalize">{item.label.replace(/_/g, " ")}</span>
+                                                    <span className={`font-semibold tabular-nums ${item.delta > 0 ? "text-green-600" : item.delta < 0 ? "text-red-500" : "text-gray-300"}`}>
+                                                      {item.delta > 0 ? "+" : ""}{item.delta % 1 === 0 ? item.delta.toFixed(0) : item.delta.toFixed(2)}
+                                                    </span>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                        {bd.evidenceTotal !== null && (
+                                          <div className="pt-3 border-t border-gray-100">
+                                            <div className="flex justify-between items-center text-[11px] mb-1">
+                                              <span className="font-semibold text-teal-600 uppercase tracking-wide">Evidence</span>
+                                              <span className="font-bold text-gray-700 tabular-nums">{bd.evidenceTotal} / {bd.evidenceMax}</span>
+                                            </div>
+                                            <div className="h-2 bg-teal-100 rounded-full overflow-hidden">
+                                              <div className="h-full bg-teal-400 rounded-full" style={{ width: `${(bd.evidenceTotal / bd.evidenceMax) * 100}%` }} />
+                                            </div>
+                                            {evidenceItems.length > 0 && (
+                                              <div className="mt-2 space-y-1 pl-1">
+                                                {evidenceItems.map((item, i) => (
+                                                  <div key={i} className="flex justify-between items-center text-[11px]">
+                                                    <span className="text-gray-400 capitalize">{item.label.replace(/_/g, " ")}</span>
+                                                    <span className={`font-semibold tabular-nums ${item.delta > 0 ? "text-green-600" : item.delta < 0 ? "text-red-500" : "text-gray-300"}`}>
+                                                      {item.delta > 0 ? "+" : ""}{item.delta % 1 === 0 ? item.delta.toFixed(0) : item.delta.toFixed(2)}
+                                                    </span>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Evidence cards */}
+                                  {lead.evidence_cards && lead.evidence_cards.length > 0 ? (
+                                    lead.evidence_cards.map((card, i) => {
+                                      const sig = getSignalInfo(card.signal_type);
+                                      const { cls, Icon: StrIcon } = getStrengthStyle(card.strength);
+                                      return (
+                                        <div key={i} className="bg-white rounded-xl border border-gray-200 p-3">
+                                          <div className="flex items-start justify-between mb-2 gap-2">
+                                            <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold shrink-0 ${sig.cls}`}>
+                                              {sig.label}
+                                            </span>
+                                            <div className="flex items-center gap-1.5">
+                                              <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5 ${cls}`}>
+                                                <StrIcon className="w-3 h-3" />{card.strength}
+                                              </span>
+                                              <span className={`text-xs font-bold tabular-nums ${card.points >= 0 ? "text-green-600" : "text-red-500"}`}>
+                                                {card.points >= 0 ? "+" : ""}{card.points} pts
+                                              </span>
+                                            </div>
+                                          </div>
+                                          <p className="text-xs text-gray-700 leading-relaxed">{card.reason}</p>
+                                          {card.source_excerpt && (
+                                            <p className="mt-2 text-[11px] text-gray-400 italic border-l-2 border-gray-200 pl-2 line-clamp-2">
+                                              "{card.source_excerpt}"
+                                            </p>
+                                          )}
+                                          {card.source_url && (
+                                            <a
+                                              href={card.source_url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="mt-1.5 text-[11px] text-blue-500 hover:underline flex items-center gap-0.5"
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              <ExternalLink className="w-3 h-3" /> View source
+                                            </a>
+                                          )}
+                                        </div>
+                                      );
+                                    })
+                                  ) : (
+                                    <p className="text-xs text-gray-400 px-1">No evidence cards available.</p>
+                                  )}
+                                </div>
+
+                                {/* RIGHT — Lead data: raw input & context */}
+                                <div className="space-y-3">
+                                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                    <FileText className="w-3 h-3 text-orange-400" /> Lead Details
+                                  </p>
+
+                                  {lead.comments && (
+                                    <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1">
+                                        <MessageSquare className="w-3 h-3" /> Sales Notes
+                                      </p>
+                                      <p className="text-xs text-gray-700 leading-relaxed">{lead.comments}</p>
+                                    </div>
+                                  )}
+
+                                  {lead.knowledge && (
+                                    <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1">
+                                        <Globe className="w-3 h-3" /> Research
+                                      </p>
+                                      <p className="text-xs text-gray-600 leading-relaxed line-clamp-6">{lead.knowledge}</p>
+                                      {lead.knowledge_sources && lead.knowledge_sources.length > 0 && (
+                                        <div className="mt-3 pt-3 border-t border-gray-100 space-y-1">
+                                          {lead.knowledge_sources.map((src, i) => (
+                                            <a
+                                              key={i}
+                                              href={src}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-[11px] text-blue-500 hover:underline flex items-center gap-0.5"
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              <ExternalLink className="w-3 h-3 shrink-0" />
+                                              <span className="truncate">{src}</span>
+                                            </a>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Metadata</p>
+                                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                                      <span className="text-gray-400">Lead ID</span>
+                                      <span className="font-mono text-gray-700 text-right">#{lead.id}</span>
+                                      <span className="text-gray-400">Created</span>
+                                      <span className="text-gray-700 text-right">{formatDate(lead.created_at)}</span>
+                                      <span className="text-gray-400">Web Evidence</span>
+                                      <span className={`font-medium text-right ${lead.used_web_evidence ? "text-teal-600" : "text-amber-600"}`}>
+                                        {lead.used_web_evidence ? "Yes" : "Fallback"}
+                                      </span>
+                                      <span className="text-gray-400">Evidence Cards</span>
+                                      <span className="text-gray-700 text-right">{lead.evidence_cards?.length ?? 0}</span>
+                                      <span className="text-gray-400">Sources</span>
+                                      <span className="text-gray-700 text-right">{lead.knowledge_sources?.length ?? 0}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                              </div>
+                            )}
+
+                          </td>
+                        </tr>
+                      );
+                    })()}
                   </Fragment>
                 ))}
               </tbody>
