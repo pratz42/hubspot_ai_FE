@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   ArrowLeft,
   Star,
@@ -32,6 +33,11 @@ import {
   BarChart3,
   Sparkles,
   Building,
+  Loader2,
+  Plus,
+  PhoneCall,
+  Users,
+  StickyNote,
 } from "lucide-react";
 import API from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
@@ -45,6 +51,22 @@ interface EvidenceCard {
   signal_type: string;
   source_excerpt: string;
 }
+
+interface Communication {
+  id: number;
+  lead_id: number;
+  type: "email" | "call" | "note" | "meeting";
+  content?: string;
+  timestamp: string;
+  created_by?: string;
+}
+
+const COMM_TYPE_CONFIG: Record<string, { icon: React.ElementType; label: string; color: string; bg: string }> = {
+  email: { icon: Mail, label: "Email", color: "text-blue-600", bg: "bg-blue-100" },
+  call: { icon: PhoneCall, label: "Call", color: "text-green-600", bg: "bg-green-100" },
+  note: { icon: StickyNote, label: "Note", color: "text-yellow-600", bg: "bg-yellow-100" },
+  meeting: { icon: Users, label: "Meeting", color: "text-purple-600", bg: "bg-purple-100" },
+};
 
 interface Lead {
   id: number;
@@ -99,13 +121,41 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
   const [loading, setLoading] = useState(() => Boolean(leadId));
   const [error, setError] = useState("");
 
+  // Communications / activity log
+  const [comms, setComms] = useState<Communication[]>([]);
+  const [commType, setCommType] = useState<"email" | "call" | "note" | "meeting">("note");
+  const [commContent, setCommContent] = useState("");
+  const [addingComm, setAddingComm] = useState(false);
+  const [commError, setCommError] = useState("");
+
   useEffect(() => {
     if (!leadId) return;
     API.get(`/leads/${leadId}`)
       .then((res) => setLead(res.data))
       .catch((err) => setError(getErrorMessage(err, "Unable to load this lead.")))
       .finally(() => setLoading(false));
+    API.get(`/contacts/${leadId}/communications`)
+      .then((res) => setComms(Array.isArray(res.data) ? res.data : []))
+      .catch(() => {});
   }, [leadId]);
+
+  const logCommunication = async () => {
+    if (!leadId || !commContent.trim()) return;
+    setAddingComm(true);
+    setCommError("");
+    try {
+      const res = await API.post(`/contacts/${leadId}/communications`, {
+        type: commType,
+        content: commContent.trim(),
+      });
+      setComms((prev) => [res.data, ...prev]);
+      setCommContent("");
+    } catch (err) {
+      setCommError(getErrorMessage(err, "Failed to log activity."));
+    } finally {
+      setAddingComm(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -205,6 +255,7 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="ai">AI Analysis</TabsTrigger>
               <TabsTrigger value="evidence">Evidence</TabsTrigger>
+              <TabsTrigger value="activity">Activity</TabsTrigger>
             </TabsList>
 
             {/* OVERVIEW TAB */}
@@ -361,6 +412,113 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                     </CardContent>
                   </Card>
                 )}
+              </div>
+            </TabsContent>
+
+            {/* ACTIVITY TAB */}
+            <TabsContent value="activity">
+              <div className="space-y-4">
+                {/* Log new activity */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-1.5">
+                      <Plus className="w-4 h-4 text-orange-500" />
+                      Log Activity
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex gap-2">
+                      {(["note", "call", "email", "meeting"] as const).map((t) => {
+                        const cfg = COMM_TYPE_CONFIG[t];
+                        return (
+                          <button
+                            key={t}
+                            onClick={() => setCommType(t)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                              commType === t
+                                ? `${cfg.bg} ${cfg.color} border-transparent`
+                                : "border-gray-200 text-gray-600 hover:border-gray-300"
+                            }`}
+                          >
+                            <cfg.icon className="w-3.5 h-3.5" />
+                            {cfg.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <textarea
+                      rows={3}
+                      placeholder={`Add ${commType} notes…`}
+                      value={commContent}
+                      onChange={(e) => setCommContent(e.target.value)}
+                      className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none"
+                    />
+                    {commError && (
+                      <p className="text-xs text-red-600">{commError}</p>
+                    )}
+                    <Button
+                      size="sm"
+                      className="bg-orange-600 hover:bg-orange-700"
+                      onClick={logCommunication}
+                      disabled={addingComm || !commContent.trim()}
+                    >
+                      {addingComm ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />}
+                      Log {COMM_TYPE_CONFIG[commType].label}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                {/* Communication history */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-1.5">
+                      <Activity className="w-4 h-4 text-blue-500" />
+                      Communication History
+                      {comms.length > 0 && (
+                        <span className="ml-1 text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full">{comms.length}</span>
+                      )}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {comms.length === 0 ? (
+                      <div className="text-center py-8">
+                        <MessageSquare className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+                        <p className="text-sm text-gray-400">No activity logged yet.</p>
+                        <p className="text-xs text-gray-400 mt-1">Log a call, email, or note above.</p>
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <div className="absolute left-3.5 top-0 bottom-0 w-px bg-gray-100" />
+                        <div className="space-y-4">
+                          {comms.map((comm) => {
+                            const cfg = COMM_TYPE_CONFIG[comm.type] ?? COMM_TYPE_CONFIG.note;
+                            return (
+                              <div key={comm.id} className="flex items-start gap-3">
+                                <div className={`w-7 h-7 rounded-full ${cfg.bg} flex items-center justify-center flex-shrink-0 z-10 relative`}>
+                                  <cfg.icon className={`w-3.5 h-3.5 ${cfg.color}`} />
+                                </div>
+                                <div className="flex-1 min-w-0 pt-0.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
+                                    <span className="text-xs text-gray-400">
+                                      {new Date(comm.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                    </span>
+                                    {comm.created_by && (
+                                      <span className="text-xs text-gray-400">· {comm.created_by}</span>
+                                    )}
+                                  </div>
+                                  {comm.content && (
+                                    <p className="text-sm text-gray-700 mt-0.5 leading-relaxed">{comm.content}</p>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
               </div>
             </TabsContent>
 
