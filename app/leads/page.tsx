@@ -31,8 +31,9 @@ import {
   X,
   Loader2,
 } from "lucide-react";
-import API from "@/lib/api";
+import API, { extractArray } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
+import { getPipelineStage } from "@/lib/pipeline";
 
 const BLANK_FORM = {
   name: "",
@@ -122,14 +123,7 @@ const getScoreBorder = (score?: number) => {
 };
 
 const getStatusStyle = (status: string) => {
-  switch (status.toLowerCase()) {
-    case "active":     return "bg-green-100 text-green-700";
-    case "new":        return "bg-blue-100 text-blue-700";
-    case "qualified":  return "bg-purple-100 text-purple-700";
-    case "closed":     return "bg-gray-100 text-gray-600";
-    case "invalid":    return "bg-red-100 text-red-600";
-    default:           return "bg-gray-100 text-gray-600";
-  }
+  return getPipelineStage(status).badge;
 };
 
 const getSourceStyle = (source?: string) => {
@@ -249,8 +243,9 @@ export default function LeadsPage() {
     if (isRefresh) setRefreshing(true);
     try {
       const res = await API.get("/leads");
-      setLeads(res.data);
-      setFilteredLeads(res.data);
+      const data = extractArray<Lead>(res.data);
+      setLeads(data);
+      setFilteredLeads(data);
     } catch (err) {
       setError(getErrorMessage(err, "Unable to load leads. Please refresh the page."));
     } finally {
@@ -415,7 +410,7 @@ export default function LeadsPage() {
                           <span
                             className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${getStatusStyle(lead.status)}`}
                           >
-                            {lead.status}
+                            {getPipelineStage(lead.status).label}
                           </span>
                           <span className="text-[11px] text-gray-400 flex items-center gap-0.5">
                             <Calendar className="w-3 h-3" />
@@ -726,7 +721,7 @@ export default function LeadsPage() {
                                           <p className="text-xs text-gray-700 leading-relaxed">{card.reason}</p>
                                           {card.source_excerpt && (
                                             <p className="mt-2 text-[11px] text-gray-400 italic border-l-2 border-gray-200 pl-2 line-clamp-2">
-                                              "{card.source_excerpt}"
+                                              &ldquo;{card.source_excerpt}&rdquo;
                                             </p>
                                           )}
                                           {card.source_url && (

@@ -187,7 +187,7 @@ export default function LoginPage() {
 
               <div className="text-center">
                 <p className="text-sm text-gray-600">
-                  Don't have an account?{" "}
+                  Don&apos;t have an account?{" "}
                   <span className="text-orange-600 font-medium cursor-pointer hover:underline">
                     Contact your administrator
                   </span>
