@@ -5,7 +5,12 @@ export function getErrorMessage(
   fallback = "Something went wrong. Please try again."
 ) {
   if (axios.isAxiosError(error)) {
-    const response = error.response?.data as any;
+    const response = error.response?.data as
+      | {
+          detail?: unknown;
+          message?: unknown;
+        }
+      | undefined;
 
     if (response?.detail) {
       return String(response.detail);
