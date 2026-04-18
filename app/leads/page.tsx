@@ -37,6 +37,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Filter,
+  Briefcase,
 } from "lucide-react";
 import API, { extractArray } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
@@ -52,7 +53,7 @@ const BLANK_FORM = {
   industry: "",
   deal_size: "",
   source: "",
-  status: "",
+  status: "new",
   comments: "",
   tags: "",
 };
@@ -144,26 +145,26 @@ const formatDate = (dateStr: string) =>
 
 const getOfferingColor = (index: number) => {
   const colors = [
-    "bg-blue-100 text-blue-800",
-    "bg-purple-100 text-purple-800",
-    "bg-green-100 text-green-800",
-    "bg-orange-100 text-orange-800",
-    "bg-pink-100 text-pink-800",
+    "bg-indigo-50 text-indigo-700 border border-indigo-100",
+    "bg-violet-50 text-violet-700 border border-violet-100",
+    "bg-emerald-50 text-emerald-700 border border-emerald-100",
+    "bg-orange-50 text-orange-700 border border-orange-100",
+    "bg-pink-50 text-pink-700 border border-pink-100",
   ];
   return colors[index % colors.length];
 };
 
 const getScoreColor = (score?: number) => {
-  if (!score) return "text-gray-500";
-  if (score >= 80) return "text-green-600";
-  if (score >= 60) return "text-yellow-600";
+  if (!score) return "text-slate-400";
+  if (score >= 80) return "text-emerald-700";
+  if (score >= 60) return "text-amber-700";
   return "text-red-600";
 };
 
 const getScoreBorder = (score?: number) => {
-  if (!score) return "border-gray-200 bg-gray-50";
-  if (score >= 80) return "border-green-200 bg-green-50";
-  if (score >= 60) return "border-yellow-200 bg-yellow-50";
+  if (!score) return "border-slate-200 bg-slate-50";
+  if (score >= 80) return "border-emerald-200 bg-emerald-50";
+  if (score >= 60) return "border-amber-200 bg-amber-50";
   return "border-red-200 bg-red-50";
 };
 
@@ -265,6 +266,15 @@ export default function LeadsPage() {
   const [pendingFilters, setPendingFilters] = useState<ActiveFilters>({ ...BLANK_FILTERS });
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({ industries: [], sources: [] });
 
+  // Association search for Add Lead
+  const [assocType, setAssocType] = useState<"contact" | "company">("contact");
+  const [assocSearch, setAssocSearch] = useState("");
+  const [assocResults, setAssocResults] = useState<{ id: number; label: string; sub: string; company_id?: number; industry?: string; source?: string }[]>([]);
+  const [selectedAssoc, setSelectedAssoc] = useState<{ id: number; label: string; type: "contact" | "company" } | null>(null);
+  const [assocSearching, setAssocSearching] = useState(false);
+  const [companyIndustry, setCompanyIndustry] = useState<string>("");
+  const [contactDetails, setContactDetails] = useState<{ company_name?: string; industry?: string; source?: string } | null>(null);
+
   // CSV Import modal
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -359,6 +369,12 @@ export default function LeadsPage() {
     setForm({ ...BLANK_FORM });
     setFormError("");
     setFormSuccess(false);
+    setAssocType("contact");
+    setAssocSearch("");
+    setAssocResults([]);
+    setSelectedAssoc(null);
+    setCompanyIndustry("");
+    setContactDetails(null);
     setDrawerOpen(true);
   };
 
@@ -392,27 +408,14 @@ export default function LeadsPage() {
     setForm((prev) => ({ ...prev, [field]: value }));
 
   const handleSubmit = async () => {
-    if (!form.name.trim() || !form.company.trim()) {
-      setFormError("Name and company are required.");
-      return;
-    }
-    if (!editingLead && !form.email.trim()) {
-      setFormError("Email is required.");
-      return;
-    }
-    if (!editingLead) {
-      if (!form.industry.trim()) { setFormError("Industry is required."); return; }
-      if (!form.source.trim()) { setFormError("Source is required."); return; }
-      if (!form.deal_size) { setFormError("Deal Size is required."); return; }
-    }
     setFormError("");
     setSubmitting(true);
     try {
       const tags = form.tags.split(",").map((t) => t.trim()).filter(Boolean);
       if (editingLead) {
         await API.patch(`/leads/${editingLead.id}`, {
-          name: form.name.trim(),
-          company: form.company.trim(),
+          name: form.name.trim() || undefined,
+          company: form.company.trim() || undefined,
           email: form.email.trim() || undefined,
           phone: form.phone.trim() || undefined,
           industry: form.industry.trim() || undefined,
@@ -423,17 +426,24 @@ export default function LeadsPage() {
           tags,
         });
       } else {
-        await API.post("/leads", {
-          name: form.name.trim(),
-          company: form.company.trim(),
-          email: form.email.trim(),
-          phone: form.phone.trim() || undefined,
-          industry: form.industry.trim(),
-          deal_size: parseFloat(form.deal_size),
-          source: form.source.trim(),
+        if (!selectedAssoc) { setFormError("Select a Contact or Company first."); setSubmitting(false); return; }
+        if (form.status !== "new" && !form.deal_size) { setFormError("Deal Size is required for this stage."); setSubmitting(false); return; }
+
+        const payload: Record<string, unknown> = {
+          status: form.status || "new",
           comments: form.comments.trim() || undefined,
           tags,
-        });
+        };
+        if (form.deal_size) payload.deal_size = parseFloat(form.deal_size);
+        if (assocType === "contact") {
+          payload.contact_id = selectedAssoc.id;
+          if (contactDetails?.industry) payload.industry = contactDetails.industry;
+          if (contactDetails?.source) payload.source = contactDetails.source;
+        } else {
+          payload.company_id_assoc = selectedAssoc.id;
+          if (companyIndustry) payload.industry = companyIndustry;
+        }
+        await API.post("/leads", payload);
       }
       setFormSuccess(true);
       await fetchLeads(true);
@@ -466,6 +476,19 @@ export default function LeadsPage() {
     } else {
       a.download = "leads-export.csv";
       a.click();
+    }
+  };
+
+  /* ── Convert to Deal ── */
+  const handleConvertToDeal = async (leadId: number) => {
+    try {
+      const res = await API.post(`/leads/${leadId}/convert-to-deal`);
+      const dealId = res.data?.deal_id;
+      if (dealId) {
+        window.location.href = `/deals`;
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, "Failed to convert lead to deal."));
     }
   };
 
@@ -504,10 +527,14 @@ export default function LeadsPage() {
   /* ── Loading state ── */
   if (loading) {
     return (
-      <div className="p-8 animate-pulse space-y-4">
-        <div className="h-8 bg-gray-200 rounded w-56" />
-        <div className="h-10 bg-gray-200 rounded" />
-        {[...Array(4)].map((_, i) => <div key={i} className="h-16 bg-gray-200 rounded" />)}
+      <div className="p-6 space-y-4">
+        <div className="h-7 bg-slate-200 rounded-lg w-32 animate-pulse" />
+        <div className="h-10 bg-slate-200 rounded-lg animate-pulse" />
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="h-16 border-b border-slate-100 animate-pulse bg-slate-50/50 last:border-0" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -515,28 +542,28 @@ export default function LeadsPage() {
   const activeFilterCount = countActiveFilters(filters);
 
   return (
-    <div className="p-6">
+    <div className="p-6 space-y-5">
       {/* Page header */}
-      <div className="flex justify-between items-start mb-6">
+      <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Leads</h1>
-          <p className="text-gray-500 mt-1 text-sm">
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Leads</h1>
+          <p className="text-slate-500 mt-0.5 text-sm">
             {leads.length} lead{leads.length !== 1 ? "s" : ""} · AI-powered intelligence &amp; pipeline tracking
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" className="text-sm" onClick={openImport}>
+          <Button variant="outline" className="text-sm border-slate-200 text-slate-700 hover:bg-slate-50" onClick={openImport}>
             <Upload className="w-4 h-4 mr-2" />
             Import CSV
           </Button>
-          <Button className="bg-orange-600 hover:bg-orange-700 text-sm" onClick={openAddDrawer}>
+          <Button className="bg-orange-600 hover:bg-orange-700 text-sm shadow-sm shadow-orange-200" onClick={openAddDrawer}>
             <Plus className="w-4 h-4 mr-2" />
             Add Lead
           </Button>
         </div>
       </div>
 
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden border-slate-200 shadow-sm">
         <CardContent className="p-0">
           {error && (
             <div className="m-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -545,18 +572,18 @@ export default function LeadsPage() {
           )}
 
           {/* Toolbar */}
-          <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-white">
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-white">
             <div className="relative flex-1 max-w-xs">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
               <Input
                 placeholder="Search leads…"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9 h-8 text-sm"
+                className="pl-9 h-8 text-sm bg-slate-50 border-slate-200 focus:bg-white"
               />
             </div>
-            <span className="text-xs text-gray-400 ml-1">
-              {filteredLeads.length} lead{filteredLeads.length !== 1 ? "s" : ""}
+            <span className="text-xs text-slate-400 font-medium">
+              {filteredLeads.length} result{filteredLeads.length !== 1 ? "s" : ""}
             </span>
             {refreshing && (
               <span className="flex items-center gap-1 text-xs text-orange-500 font-medium">
@@ -568,7 +595,7 @@ export default function LeadsPage() {
               <Button
                 variant="outline"
                 size="sm"
-                className={`text-xs h-8 ${activeFilterCount > 0 ? "border-orange-400 text-orange-600 bg-orange-50" : ""}`}
+                className={`text-xs h-8 border-slate-200 ${activeFilterCount > 0 ? "border-orange-300 text-orange-600 bg-orange-50" : "text-slate-600"}`}
                 onClick={openFilter}
               >
                 <SlidersHorizontal className="w-3.5 h-3.5 mr-1.5" />
@@ -579,7 +606,7 @@ export default function LeadsPage() {
                   </span>
                 )}
               </Button>
-              <Button variant="outline" size="sm" className="text-xs h-8" onClick={handleExport}>
+              <Button variant="outline" size="sm" className="text-xs h-8 border-slate-200 text-slate-600" onClick={handleExport}>
                 <Download className="w-3.5 h-3.5 mr-1.5" />
                 Export
               </Button>
@@ -588,38 +615,38 @@ export default function LeadsPage() {
 
           {/* Active filter chips */}
           {activeFilterCount > 0 && (
-            <div className="flex items-center gap-2 px-4 py-2 bg-orange-50 border-b border-orange-100 flex-wrap">
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-orange-50/60 border-b border-orange-100 flex-wrap">
               <Filter className="w-3.5 h-3.5 text-orange-500 shrink-0" />
               {filters.status && (
-                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2 py-0.5 rounded-full font-medium">
+                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2.5 py-0.5 rounded-full font-semibold">
                   Status: {filters.status}
                 </span>
               )}
               {filters.industry && (
-                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2 py-0.5 rounded-full font-medium">
+                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2.5 py-0.5 rounded-full font-semibold">
                   Industry: {filters.industry}
                 </span>
               )}
               {filters.source && (
-                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2 py-0.5 rounded-full font-medium">
+                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2.5 py-0.5 rounded-full font-semibold">
                   Source: {filters.source}
                 </span>
               )}
               {(filters.min_deal || filters.max_deal) && (
-                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2 py-0.5 rounded-full font-medium">
+                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2.5 py-0.5 rounded-full font-semibold">
                   Deal: {filters.min_deal ? `$${filters.min_deal}` : "any"} – {filters.max_deal ? `$${filters.max_deal}` : "any"}
                 </span>
               )}
               {(filters.min_score || filters.max_score) && (
-                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2 py-0.5 rounded-full font-medium">
+                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2.5 py-0.5 rounded-full font-semibold">
                   Score: {filters.min_score || "0"} – {filters.max_score || "100"}
                 </span>
               )}
               <button
                 onClick={clearFilters}
-                className="ml-auto text-xs text-orange-600 hover:text-orange-800 font-medium underline"
+                className="ml-auto text-xs text-orange-600 hover:text-orange-800 font-semibold"
               >
-                Clear all
+                Clear all ×
               </button>
             </div>
           )}
@@ -628,11 +655,11 @@ export default function LeadsPage() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1180px] text-sm border-collapse">
               <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
+                <tr className="bg-slate-50 border-b border-slate-200">
                   {["Lead", "Contact", "Industry / Source", "Deal Size", "AI Score", "Offerings", "AI Insight", "Actions"].map((h) => (
                     <th
                       key={h}
-                      className="text-left py-2.5 px-4 font-semibold text-gray-500 text-xs uppercase tracking-wide whitespace-nowrap"
+                      className="text-left py-3 px-4 font-semibold text-slate-500 text-xs uppercase tracking-wider whitespace-nowrap"
                     >
                       {h}
                     </th>
@@ -646,27 +673,29 @@ export default function LeadsPage() {
                     {/* Main row */}
                     <tr
                       onClick={() => toggleExpand(lead.id)}
-                      className={`border-b border-gray-100 transition-colors cursor-pointer ${
-                        expandedId === lead.id ? "bg-orange-50/40" : "hover:bg-gray-50/70"
+                      className={`border-b border-slate-100 transition-colors cursor-pointer ${
+                        expandedId === lead.id ? "bg-orange-50/30" : "hover:bg-slate-50"
                       }`}
                     >
                       {/* Lead */}
-                      <td className="py-3 px-4 align-top min-w-[190px]">
-                        <div className="font-semibold text-gray-900 leading-tight">{lead.name}</div>
-                        <div className="text-xs text-gray-500 mt-0.5">{lead.company}</div>
-                        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${getStatusStyle(lead.status)}`}>
+                      <td className="py-3.5 px-4 align-top min-w-[190px]">
+                        <div className="font-semibold text-slate-900 leading-tight">{lead.name}</div>
+                        <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1">
+                          <Building2 className="w-3 h-3 flex-shrink-0" />{lead.company}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${getStatusStyle(lead.status)}`}>
                             {getPipelineStage(lead.status).label}
                           </span>
-                          <span className="text-[11px] text-gray-400 flex items-center gap-0.5">
+                          <span className="text-[11px] text-slate-400 flex items-center gap-0.5">
                             <Calendar className="w-3 h-3" />
                             {formatDate(lead.created_at)}
                           </span>
                         </div>
                         {lead.tags && lead.tags.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1">
+                          <div className="flex flex-wrap gap-1 mt-1.5">
                             {lead.tags.slice(0, 2).map((tag, i) => (
-                              <span key={i} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
+                              <span key={i} className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md font-medium">
                                 {tag}
                               </span>
                             ))}
@@ -675,17 +704,17 @@ export default function LeadsPage() {
                       </td>
 
                       {/* Contact */}
-                      <td className="py-3 px-4 align-top min-w-[165px]">
-                        <div className="space-y-1 text-xs text-gray-600">
+                      <td className="py-3.5 px-4 align-top min-w-[165px]">
+                        <div className="space-y-1.5 text-xs text-slate-600">
                           {lead.email && (
                             <div className="flex items-center gap-1.5">
-                              <Mail className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                              <Mail className="w-3 h-3 text-slate-400 flex-shrink-0" />
                               <span className="truncate max-w-[135px]">{lead.email}</span>
                             </div>
                           )}
                           {lead.phone && (
                             <div className="flex items-center gap-1.5">
-                              <Phone className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                              <Phone className="w-3 h-3 text-slate-400 flex-shrink-0" />
                               {lead.phone}
                             </div>
                           )}
@@ -693,76 +722,73 @@ export default function LeadsPage() {
                       </td>
 
                       {/* Industry / Source */}
-                      <td className="py-3 px-4 align-top min-w-[140px]">
+                      <td className="py-3.5 px-4 align-top min-w-[140px]">
                         <div className="space-y-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <Building2 className="w-3 h-3 text-gray-400 flex-shrink-0" />
-                            <span className="text-xs text-gray-700 capitalize">{lead.industry || "—"}</span>
-                          </div>
+                          <span className="text-xs text-slate-700 capitalize font-medium">{lead.industry || "—"}</span>
                           {lead.source && (
-                            <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium capitalize ${getSourceStyle(lead.source)}`}>
-                              {lead.source}
-                            </span>
+                            <div>
+                              <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${getSourceStyle(lead.source)}`}>
+                                {lead.source}
+                              </span>
+                            </div>
                           )}
                         </div>
                       </td>
 
                       {/* Deal Size */}
-                      <td className="py-3 px-4 align-top min-w-[100px]">
-                        <span className="font-semibold text-gray-800 text-sm">{formatDealSize(lead.deal_size)}</span>
+                      <td className="py-3.5 px-4 align-top min-w-[100px]">
+                        <span className="font-bold text-slate-800 text-sm tabular-nums">{formatDealSize(lead.deal_size)}</span>
                       </td>
 
                       {/* AI Score */}
-                      <td className="py-3 px-4 align-top min-w-[135px]">
-                        <div className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border font-bold text-sm ${getScoreBorder(lead.ai_score)} ${getScoreColor(lead.ai_score)}`}>
-                          <Star className="w-3.5 h-3.5" />
-                          {lead.ai_score !== undefined ? lead.ai_score.toFixed(1) : "—"}
-                        </div>
-                        <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-                          <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium ${lead.used_web_evidence ? "bg-teal-100 text-teal-700" : "bg-amber-100 text-amber-700"}`}>
-                            {lead.used_web_evidence ? "Web ✓" : "Fallback"}
-                          </span>
-                          {lead.evidence_cards && lead.evidence_cards.length > 0 && (() => {
-                            const { cls, Icon } = getStrengthStyle(lead.evidence_cards[0].strength);
-                            return (
-                              <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5 ${cls}`}>
-                                <Icon className="w-3 h-3" />{lead.evidence_cards[0].strength}
-                              </span>
-                            );
-                          })()}
-                        </div>
+                      <td className="py-3.5 px-4 align-top min-w-[130px]">
+                        {lead.ai_score != null ? (
+                          <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border font-bold text-sm ${getScoreBorder(lead.ai_score)} ${getScoreColor(lead.ai_score)}`}>
+                            <Star className="w-3.5 h-3.5" />
+                            {lead.ai_score.toFixed(0)}
+                          </div>
+                        ) : (
+                          <span className="text-slate-300 text-sm font-medium">—</span>
+                        )}
+                        {lead.used_web_evidence && (
+                          <div className="mt-1.5">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-teal-50 text-teal-700">
+                              Web
+                            </span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Offerings */}
-                      <td className="py-3 px-4 align-top min-w-[200px]">
+                      <td className="py-3.5 px-4 align-top min-w-[200px]">
                         {lead.recommended_offerings && lead.recommended_offerings.length > 0 ? (
                           <div className="flex flex-wrap gap-1">
                             {lead.recommended_offerings.slice(0, 2).map((o, idx) => (
-                              <span key={idx} className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${getOfferingColor(idx)}`}>
+                              <span key={idx} className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getOfferingColor(idx)}`}>
                                 {o}
                               </span>
                             ))}
                             {lead.recommended_offerings.length > 2 && (
                               <span
-                                className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 cursor-help"
+                                className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500 cursor-help"
                                 title={lead.recommended_offerings.slice(2).join(", ")}
                               >
-                                +{lead.recommended_offerings.length - 2} more
+                                +{lead.recommended_offerings.length - 2}
                               </span>
                             )}
                           </div>
                         ) : (
-                          <span className="text-gray-400 text-xs">—</span>
+                          <span className="text-slate-300 text-xs">—</span>
                         )}
                       </td>
 
                       {/* AI Insight */}
-                      <td className="py-3 px-4 align-top min-w-[210px] max-w-[240px]">
+                      <td className="py-3.5 px-4 align-top min-w-[210px] max-w-[240px]">
                         {lead.ai_reason && (
-                          <p className="text-xs text-gray-700 line-clamp-2 leading-relaxed">{lead.ai_reason}</p>
+                          <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">{lead.ai_reason}</p>
                         )}
                         <button
-                          className="mt-1.5 text-[11px] text-orange-600 hover:text-orange-700 font-medium flex items-center gap-0.5"
+                          className="mt-1.5 text-[11px] text-orange-600 hover:text-orange-700 font-semibold flex items-center gap-0.5"
                           onClick={(e) => { e.stopPropagation(); toggleExpand(lead.id); }}
                         >
                           {expandedId === lead.id ? <>Collapse <ChevronUp className="w-3 h-3" /></> : <>Full details <ChevronDown className="w-3 h-3" /></>}
@@ -770,23 +796,30 @@ export default function LeadsPage() {
                       </td>
 
                       {/* Actions */}
-                      <td className="py-3 px-4 align-top">
-                        <div className="flex items-center gap-1">
+                      <td className="py-3.5 px-4 align-top">
+                        <div className="flex items-center gap-1 flex-wrap">
                           <Link href={`/leads/${lead.id}`} onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="sm" className="h-7 text-xs px-2">
+                            <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-slate-600 hover:text-orange-600 hover:bg-orange-50">
                               <Eye className="w-3.5 h-3.5 mr-1" />View
                             </Button>
                           </Link>
                           <button
+                            onClick={(e) => { e.stopPropagation(); handleConvertToDeal(lead.id); }}
+                            className="h-7 px-2 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors flex items-center gap-1"
+                            title="Convert to Deal"
+                          >
+                            <Briefcase className="w-3 h-3" />Deal
+                          </button>
+                          <button
                             onClick={(e) => openEditDrawer(lead, e)}
-                            className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-orange-600 transition-colors"
+                            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-orange-600 transition-colors"
                             title="Edit lead"
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={(e) => { e.stopPropagation(); toggleExpand(lead.id); }}
-                            className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
                           >
                             {expandedId === lead.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                           </button>
@@ -801,39 +834,39 @@ export default function LeadsPage() {
                       const intentItems = bd?.items.filter((x) => x.category === "intent") ?? [];
                       const evidenceItems = bd?.items.filter((x) => x.category === "evidence") ?? [];
                       return (
-                        <tr className="border-b border-orange-100 bg-gradient-to-b from-orange-50/20 to-white">
+                        <tr className="border-b border-slate-100 bg-gradient-to-b from-orange-50/20 to-white">
                           <td colSpan={8} className="px-6 py-5">
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                              <div className="space-y-3">
-                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                                  <Target className="w-3 h-3 text-orange-400" /> Sales Strategy
+                              <div className="space-y-2.5">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                                  <Target className="w-3 h-3 text-orange-500" /> Sales Strategy
                                 </p>
-                                <div className="bg-orange-50 rounded-xl border border-orange-200 p-4 space-y-3">
+                                <div className="bg-orange-50 rounded-xl border border-orange-200/70 p-4 space-y-3">
                                   {lead.sales_strategy && (
-                                    <p className="text-xs text-gray-700 leading-relaxed">{lead.sales_strategy}</p>
+                                    <p className="text-xs text-slate-700 leading-relaxed">{lead.sales_strategy}</p>
                                   )}
                                   {lead.recommended_offerings && lead.recommended_offerings.length > 0 && (
                                     <div>
-                                      <p className="text-[10px] text-orange-500 font-semibold uppercase tracking-wide mb-1.5">Pitch first</p>
+                                      <p className="text-[10px] text-orange-600 font-bold uppercase tracking-wide mb-2">Recommended Offerings</p>
                                       <div className="flex flex-wrap gap-1.5">
                                         {lead.recommended_offerings.map((o, idx) => (
-                                          <span key={idx} className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${getOfferingColor(idx)}`}>{o}</span>
+                                          <span key={idx} className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${getOfferingColor(idx)}`}>{o}</span>
                                         ))}
                                       </div>
                                     </div>
                                   )}
                                 </div>
                               </div>
-                              <div className="space-y-3">
-                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                                  <Brain className="w-3 h-3 text-orange-400" /> AI Analysis
+                              <div className="space-y-2.5">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                                  <Brain className="w-3 h-3 text-violet-500" /> AI Analysis
                                 </p>
-                                <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+                                <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
                                   {lead.ai_reason && (
-                                    <p className="text-xs font-medium text-gray-800 leading-relaxed">{lead.ai_reason}</p>
+                                    <p className="text-xs font-semibold text-slate-800 leading-relaxed">{lead.ai_reason}</p>
                                   )}
                                   {narrative && (
-                                    <p className="text-xs text-gray-500 leading-relaxed border-t border-gray-100 pt-3">{narrative}</p>
+                                    <p className="text-xs text-slate-500 leading-relaxed border-t border-slate-100 pt-3">{narrative}</p>
                                   )}
                                 </div>
                               </div>
@@ -1016,14 +1049,21 @@ export default function LeadsPage() {
           </div>
 
           {filteredLeads.length === 0 && !error && (
-            <div className="text-center py-14">
-              <Users className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-              <h3 className="text-base font-medium text-gray-900 mb-1">No leads found</h3>
-              <p className="text-gray-500 text-sm">
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mb-4">
+                <Users className="w-6 h-6 text-slate-400" />
+              </div>
+              <h3 className="text-sm font-semibold text-slate-700 mb-1">No leads found</h3>
+              <p className="text-slate-400 text-xs max-w-xs">
                 {searchTerm || activeFilterCount > 0
-                  ? "Try adjusting your search or filters."
-                  : "Get started by adding your first lead."}
+                  ? "Try adjusting your search or active filters."
+                  : "Get started by adding your first lead or importing a CSV."}
               </p>
+              {!searchTerm && activeFilterCount === 0 && (
+                <button onClick={openAddDrawer} className="mt-4 text-xs font-semibold text-orange-600 hover:text-orange-700">
+                  + Add your first lead
+                </button>
+              )}
             </div>
           )}
         </CardContent>
@@ -1034,112 +1074,275 @@ export default function LeadsPage() {
         <>
           <div className="fixed inset-0 bg-black/40 z-40" onClick={closeDrawer} />
           <div className="fixed right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl z-50 flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">
+                <h2 className="text-base font-bold text-slate-900">
                   {editingLead ? "Edit Lead" : "Add New Lead"}
                 </h2>
-                <p className="text-xs text-gray-500 mt-0.5">
+                <p className="text-xs text-slate-500 mt-0.5">
                   {editingLead ? `Editing ${editingLead.name}` : "AI scoring runs automatically after creation"}
                 </p>
               </div>
-              <button onClick={closeDrawer} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+              <button onClick={closeDrawer} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Name <span className="text-red-500">*</span></label>
-                  <Input placeholder="Aarav Mehta" value={form.name} onChange={(e) => setField("name", e.target.value)} className="h-8 text-sm" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Company <span className="text-red-500">*</span></label>
-                  <Input placeholder="Acme Corp" value={form.company} onChange={(e) => setField("company", e.target.value)} className="h-8 text-sm" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Email {!editingLead && <span className="text-red-500">*</span>}
-                  </label>
-                  <Input type="email" placeholder="name@company.com" value={form.email} onChange={(e) => setField("email", e.target.value)} className="h-8 text-sm" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Phone</label>
-                  <Input placeholder="+91-9876543210" value={form.phone} onChange={(e) => setField("phone", e.target.value)} className="h-8 text-sm" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Industry {!editingLead && <span className="text-red-500">*</span>}
-                  </label>
-                  <Input placeholder="pharma, logistics…" value={form.industry} onChange={(e) => setField("industry", e.target.value)} className="h-8 text-sm" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Source {!editingLead && <span className="text-red-500">*</span>}
-                  </label>
-                  <Input placeholder="LinkedIn, Website, Referral…" value={form.source} onChange={(e) => setField("source", e.target.value)} className="h-8 text-sm" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Deal Size (USD) {!editingLead && <span className="text-red-500">*</span>}
-                  </label>
-                  <Input type="number" min={0} placeholder="250000" value={form.deal_size} onChange={(e) => setField("deal_size", e.target.value)} className="h-8 text-sm" />
-                </div>
-                {editingLead && (
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4 bg-slate-50/30">
+              {!editingLead ? (
+                <>
+                  {/* Lead Name */}
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Status</label>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                      Lead Name <span className="text-red-500">*</span>
+                    </label>
+                    <Input
+                      placeholder="e.g. Acme Corp – Q3 Expansion"
+                      value={form.name}
+                      onChange={(e) => setField("name", e.target.value)}
+                      className="h-9 text-sm bg-white border-slate-200"
+                    />
+                  </div>
+
+                  {/* Association type toggle */}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Associate with <span className="text-red-500">*</span></label>
+                    <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-white">
+                      {(["contact", "company"] as const).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => { setAssocType(t); setAssocSearch(""); setAssocResults([]); setSelectedAssoc(null); setCompanyIndustry(""); setContactDetails(null); setField("industry", ""); }}
+                          className={`flex-1 py-2 text-xs font-semibold capitalize transition-colors ${assocType === t ? "bg-orange-600 text-white" : "text-slate-500 hover:bg-slate-50"}`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Association search */}
+                  {!selectedAssoc ? (
+                    <div className="relative">
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Search {assocType}</label>
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <Input
+                          placeholder={`Type to search ${assocType}s…`}
+                          value={assocSearch}
+                          onChange={async (e) => {
+                            const q = e.target.value;
+                            setAssocSearch(q);
+                            if (q.length < 2) { setAssocResults([]); return; }
+                            setAssocSearching(true);
+                            try {
+                              if (assocType === "contact") {
+                                const res = await API.get("/contacts", { params: { search: q, limit: 10 } });
+                                const list = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
+                                setAssocResults(list.map((c: { id: number; first_name: string; last_name?: string; email: string; company_id?: number; industry?: string; source?: string }) => ({
+                                  id: c.id,
+                                  label: `${c.first_name} ${c.last_name ?? ""}`.trim(),
+                                  sub: c.email,
+                                  company_id: c.company_id,
+                                  industry: c.industry,
+                                  source: c.source,
+                                })));
+                              } else {
+                                const res = await API.get("/companies", { params: { search: q, limit: 10 } });
+                                const list = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
+                                setAssocResults(list.map((c: { id: number; name: string; industry?: string }) => ({
+                                  id: c.id,
+                                  label: c.name,
+                                  sub: c.industry ?? "",
+                                })));
+                              }
+                            } finally {
+                              setAssocSearching(false);
+                            }
+                          }}
+                          className="pl-9 h-9 text-sm bg-white border-slate-200"
+                        />
+                      </div>
+                      {assocResults.length > 0 && (
+                        <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden">
+                          {assocResults.map((r) => (
+                            <button
+                              key={r.id}
+                              type="button"
+                              onClick={async () => {
+                                setSelectedAssoc({ id: r.id, label: r.label, type: assocType });
+                                if (assocType === "company") {
+                                  const ind = r.sub || "";
+                                  setCompanyIndustry(ind);
+                                  setField("industry", ind);
+                                } else {
+                                  let companyName: string | undefined;
+                                  if (r.company_id) {
+                                    try {
+                                      const cRes = await API.get(`/companies/${r.company_id}`);
+                                      companyName = cRes.data?.name;
+                                    } catch { /* ignore */ }
+                                  }
+                                  setContactDetails({ company_name: companyName, industry: r.industry, source: r.source });
+                                }
+                                setAssocSearch("");
+                                setAssocResults([]);
+                              }}
+                              className="w-full px-4 py-2.5 text-left hover:bg-orange-50 transition-colors border-b border-slate-100 last:border-0"
+                            >
+                              <p className="text-sm font-semibold text-slate-800">{r.label}</p>
+                              <p className="text-xs text-slate-400">{r.sub}</p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {assocSearching && <p className="text-xs text-slate-400 mt-1">Searching…</p>}
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between bg-orange-50 border border-orange-200 rounded-lg px-4 py-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">{selectedAssoc.label}</p>
+                        <p className="text-xs text-orange-600 capitalize">{selectedAssoc.type} selected</p>
+                      </div>
+                      <button type="button" onClick={() => { setSelectedAssoc(null); setCompanyIndustry(""); setContactDetails(null); setField("industry", ""); }} className="text-slate-400 hover:text-slate-600 transition-colors">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Industry / Source — conditional on association type */}
+                  {assocType === "contact" && selectedAssoc ? (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 space-y-2">
+                      <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wide">Auto-fetched from contact</p>
+                      {contactDetails?.company_name && (
+                        <div className="flex justify-between text-xs">
+                          <span className="text-slate-500">Company</span>
+                          <span className="font-semibold text-slate-800">{contactDetails.company_name}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">Industry</span>
+                        <span className="font-semibold text-slate-800">{contactDetails?.industry || <span className="text-slate-400 font-normal">—</span>}</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">Source</span>
+                        <span className="font-semibold text-slate-800">{contactDetails?.source || <span className="text-slate-400 font-normal">—</span>}</span>
+                      </div>
+                    </div>
+                  ) : assocType === "company" && selectedAssoc ? (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 space-y-2">
+                      <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wide">Auto-fetched from company</p>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">Industry</span>
+                        <span className="font-semibold text-slate-800">{companyIndustry || <span className="text-slate-400 font-normal">—</span>}</span>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Lead Stage */}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Lead Stage</label>
                     <Select value={form.status} onValueChange={(v) => setField("status", v)}>
-                      <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select status" /></SelectTrigger>
+                      <SelectTrigger className="h-9 text-sm bg-white border-slate-200"><SelectValue placeholder="Select stage" /></SelectTrigger>
                       <SelectContent>
                         {PIPELINE_STAGE_ORDER.map((s) => (
-                          <SelectItem key={s} value={s} className="capitalize">{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>
+                          <SelectItem key={s} value={s}>{getPipelineStage(s).label}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
-                )}
-              </div>
 
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Tags <span className="text-gray-400 font-normal">(comma separated)</span></label>
-                <Input placeholder="enterprise, high-priority, APAC" value={form.tags} onChange={(e) => setField("tags", e.target.value)} className="h-8 text-sm" />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Sales Notes / Comments</label>
-                <textarea
-                  rows={3}
-                  placeholder="Key pain points, conversation context…"
-                  value={form.comments}
-                  onChange={(e) => setField("comments", e.target.value)}
-                  className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none"
-                />
-              </div>
-
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                        Deal Size (₹){form.status !== "new" && <span className="text-red-500 ml-0.5">*</span>}
+                      </label>
+                      <Input type="number" min={0} placeholder="500000" value={form.deal_size} onChange={(e) => setField("deal_size", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Tags</label>
+                      <Input placeholder="enterprise, APAC" value={form.tags} onChange={(e) => setField("tags", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Sales Notes</label>
+                    <textarea rows={3} placeholder="Key pain points, context…" value={form.comments} onChange={(e) => setField("comments", e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400 resize-none" />
+                  </div>
+                </>
+              ) : (
+                /* Edit mode – keep original fields */
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Name</label>
+                      <Input value={form.name} onChange={(e) => setField("name", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Company</label>
+                      <Input value={form.company} onChange={(e) => setField("company", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Email</label>
+                      <Input type="email" value={form.email} onChange={(e) => setField("email", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Phone</label>
+                      <Input value={form.phone} onChange={(e) => setField("phone", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Industry</label>
+                      <Input value={form.industry} onChange={(e) => setField("industry", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Source</label>
+                      <Input value={form.source} onChange={(e) => setField("source", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Deal Size (₹)</label>
+                      <Input type="number" min={0} value={form.deal_size} onChange={(e) => setField("deal_size", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Status</label>
+                      <Select value={form.status} onValueChange={(v) => setField("status", v)}>
+                        <SelectTrigger className="h-9 text-sm bg-white border-slate-200"><SelectValue placeholder="Select status" /></SelectTrigger>
+                        <SelectContent>
+                          {PIPELINE_STAGE_ORDER.map((s) => (
+                            <SelectItem key={s} value={s} className="capitalize">{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Tags</label>
+                    <Input value={form.tags} onChange={(e) => setField("tags", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Sales Notes</label>
+                    <textarea rows={3} value={form.comments} onChange={(e) => setField("comments", e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400 resize-none" />
+                  </div>
+                </>
+              )}
             </div>
 
-            <div className="px-6 py-4 border-t border-gray-200 space-y-3">
+            <div className="px-6 py-4 border-t border-slate-200 space-y-3 bg-white">
               {formError && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{formError}</div>
               )}
               {formSuccess && (
-                <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700 font-medium">
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 font-semibold">
                   {editingLead ? "Lead updated successfully!" : "Lead created! AI scoring is running in the background."}
                 </div>
               )}
               <div className="flex gap-3">
-                <Button variant="outline" className="flex-1" onClick={closeDrawer} disabled={submitting}>Cancel</Button>
-                <Button className="flex-1 bg-orange-600 hover:bg-orange-700" onClick={handleSubmit} disabled={submitting || formSuccess}>
+                <Button variant="outline" className="flex-1 border-slate-200 text-slate-700" onClick={closeDrawer} disabled={submitting}>Cancel</Button>
+                <Button className="flex-1 bg-orange-600 hover:bg-orange-700 font-semibold" onClick={handleSubmit} disabled={submitting || formSuccess}>
                   {submitting ? (
                     <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{editingLead ? "Saving…" : "Creating…"}</>
                   ) : (
@@ -1157,19 +1360,21 @@ export default function LeadsPage() {
         <>
           <div className="fixed inset-0 bg-black/30 z-40" onClick={() => setFilterOpen(false)} />
           <div className="fixed right-0 top-0 h-full w-80 bg-white shadow-2xl z-50 flex flex-col">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
-              <div className="flex items-center gap-2">
-                <SlidersHorizontal className="w-4 h-4 text-orange-500" />
-                <h2 className="text-base font-semibold text-gray-900">Filter Leads</h2>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-orange-50 flex items-center justify-center">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-orange-500" />
+                </div>
+                <h2 className="text-sm font-bold text-slate-900">Filter Leads</h2>
               </div>
-              <button onClick={() => setFilterOpen(false)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 transition-colors">
+              <button onClick={() => setFilterOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5 bg-slate-50/30">
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide">Status</label>
+                <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">Status</label>
                 <Select value={pendingFilters.status} onValueChange={(v) => setPendingFilters((p) => ({ ...p, status: v === "_all" ? "" : v }))}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Any status" /></SelectTrigger>
                   <SelectContent>
@@ -1182,7 +1387,7 @@ export default function LeadsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide">Industry</label>
+                <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">Industry</label>
                 <Select value={pendingFilters.industry} onValueChange={(v) => setPendingFilters((p) => ({ ...p, industry: v === "_all" ? "" : v }))}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Any industry" /></SelectTrigger>
                   <SelectContent>
@@ -1195,7 +1400,7 @@ export default function LeadsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide">Source</label>
+                <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">Source</label>
                 <Select value={pendingFilters.source} onValueChange={(v) => setPendingFilters((p) => ({ ...p, source: v === "_all" ? "" : v }))}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Any source" /></SelectTrigger>
                   <SelectContent>
@@ -1211,7 +1416,7 @@ export default function LeadsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide">Deal Size (USD)</label>
+                <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">Deal Size (USD)</label>
                 <div className="flex gap-2">
                   <Input
                     type="number" min={0} placeholder="Min"
@@ -1229,7 +1434,7 @@ export default function LeadsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide">AI Score (0–100)</label>
+                <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">AI Score (0–100)</label>
                 <div className="flex gap-2">
                   <Input
                     type="number" min={0} max={100} placeholder="Min"
@@ -1247,11 +1452,11 @@ export default function LeadsPage() {
               </div>
             </div>
 
-            <div className="px-5 py-4 border-t border-gray-200 space-y-2">
-              <Button className="w-full bg-orange-600 hover:bg-orange-700 text-sm" onClick={applyFilters}>
+            <div className="px-5 py-4 border-t border-slate-200 space-y-2 bg-white">
+              <Button className="w-full bg-orange-600 hover:bg-orange-700 text-sm font-semibold" onClick={applyFilters}>
                 Apply Filters
               </Button>
-              <Button variant="outline" className="w-full text-sm" onClick={clearFilters}>
+              <Button variant="outline" className="w-full text-sm border-slate-200 text-slate-600" onClick={clearFilters}>
                 Clear All Filters
               </Button>
             </div>
@@ -1264,13 +1469,13 @@ export default function LeadsPage() {
         <>
           <div className="fixed inset-0 bg-black/40 z-40" onClick={() => { if (!importing) setImportOpen(false); }} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg border border-slate-200">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Import Leads from CSV</h2>
-                  <p className="text-xs text-gray-500 mt-0.5">Upload a CSV file to bulk import or update leads</p>
+                  <h2 className="text-base font-bold text-slate-900">Import Leads from CSV</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">Upload a CSV file to bulk import or update leads</p>
                 </div>
-                <button onClick={() => { if (!importing) setImportOpen(false); }} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 transition-colors">
+                <button onClick={() => { if (!importing) setImportOpen(false); }} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors">
                   <X className="w-5 h-5" />
                 </button>
               </div>

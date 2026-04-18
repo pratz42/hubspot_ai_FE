@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,6 +20,7 @@ import {
   Plus,
   Activity,
   BarChart3,
+  Sparkles,
 } from "lucide-react";
 import API, { extractArray } from "@/lib/api";
 import {
@@ -49,7 +50,12 @@ interface Campaign {
 }
 
 function getInitials(name: string) {
-  return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+  return name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 }
 
 function formatDeal(value?: number) {
@@ -59,11 +65,11 @@ function formatDeal(value?: number) {
   return `$${value}`;
 }
 
-function getScoreColor(score?: number) {
-  if (!score) return "text-gray-400";
-  if (score >= 80) return "text-green-600";
-  if (score >= 60) return "text-yellow-600";
-  return "text-red-500";
+function getScoreBadge(score?: number) {
+  if (!score) return { label: "—", cls: "text-slate-400 bg-slate-100" };
+  if (score >= 80) return { label: score.toString(), cls: "text-emerald-700 bg-emerald-50" };
+  if (score >= 60) return { label: score.toString(), cls: "text-amber-700 bg-amber-50" };
+  return { label: score.toString(), cls: "text-red-600 bg-red-50" };
 }
 
 export default function Dashboard() {
@@ -78,8 +84,10 @@ export default function Dashboard() {
           API.get("/leads"),
           API.get("/campaigns"),
         ]);
-        if (leadsResult.status === "fulfilled") setLeads(extractArray(leadsResult.value.data));
-        if (campaignsResult.status === "fulfilled") setCampaigns(extractArray(campaignsResult.value.data));
+        if (leadsResult.status === "fulfilled")
+          setLeads(extractArray(leadsResult.value.data));
+        if (campaignsResult.status === "fulfilled")
+          setCampaigns(extractArray(campaignsResult.value.data));
       } finally {
         setLoading(false);
       }
@@ -87,20 +95,28 @@ export default function Dashboard() {
     fetchData();
   }, []);
 
-  // Derived stats
   const totalLeads = leads.length;
   const activeCampaigns = campaigns.length;
-  const wonLeads = leads.filter((l) => normalizePipelineStage(l.status) === "won");
-  const conversionRate = totalLeads ? Math.round((wonLeads.length / totalLeads) * 100) : 0;
+  const wonLeads = leads.filter(
+    (l) => normalizePipelineStage(l.status) === "won"
+  );
+  const conversionRate = totalLeads
+    ? Math.round((wonLeads.length / totalLeads) * 100)
+    : 0;
   const totalPipeline = leads.reduce((s, l) => s + (l.deal_size ?? 0), 0);
   const wonRevenue = wonLeads.reduce((s, l) => s + (l.deal_size ?? 0), 0);
-  const avgScore = leads.filter((l) => l.ai_score !== undefined).length
-    ? Math.round(leads.filter((l) => l.ai_score !== undefined).reduce((s, l) => s + (l.ai_score ?? 0), 0) / leads.filter((l) => l.ai_score !== undefined).length)
+  const scoredLeads = leads.filter((l) => l.ai_score !== undefined);
+  const avgScore = scoredLeads.length
+    ? Math.round(
+        scoredLeads.reduce((s, l) => s + (l.ai_score ?? 0), 0) /
+          scoredLeads.length
+      )
     : 0;
 
-  // Pipeline by stage
   const pipelineStages = PIPELINE_STAGE_ORDER.map((stage) => {
-    const stageLeads = leads.filter((l) => normalizePipelineStage(l.status) === stage);
+    const stageLeads = leads.filter(
+      (l) => normalizePipelineStage(l.status) === stage
+    );
     return {
       stage,
       label: getPipelineStage(stage).label,
@@ -110,51 +126,102 @@ export default function Dashboard() {
     };
   });
 
-  // Top leads by AI score
   const topLeads = [...leads]
     .filter((l) => l.ai_score !== undefined)
     .sort((a, b) => (b.ai_score ?? 0) - (a.ai_score ?? 0))
     .slice(0, 5);
 
-  // Recent leads (newest first)
-  const recentLeads = [...leads].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 4);
+  const recentLeads = [...leads]
+    .sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+    .slice(0, 4);
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="mb-6">
-          <Skeleton className="h-8 w-48 mb-2" />
-          <Skeleton className="h-4 w-72" />
+      <div className="p-6 max-w-7xl space-y-6">
+        <div className="space-y-2">
+          <Skeleton className="h-7 w-48" />
+          <Skeleton className="h-4 w-64" />
         </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => (
+            <Skeleton key={i} className="h-28 rounded-xl" />
+          ))}
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <Skeleton className="h-64 rounded-xl lg:col-span-2" />
-          <Skeleton className="h-64 rounded-xl" />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <Skeleton className="h-72 rounded-xl lg:col-span-2" />
+          <Skeleton className="h-72 rounded-xl" />
         </div>
       </div>
     );
   }
 
+  const statCards = [
+    {
+      title: "Total Leads",
+      value: totalLeads.toString(),
+      sub: `${topLeads.length} AI-scored`,
+      icon: Users,
+      cardBg: "bg-indigo-600",
+      cardGlow: "from-indigo-600 to-indigo-700",
+      iconBg: "bg-indigo-500",
+    },
+    {
+      title: "Active Campaigns",
+      value: activeCampaigns.toString(),
+      sub: "Running now",
+      icon: Target,
+      cardBg: "bg-emerald-600",
+      cardGlow: "from-emerald-600 to-emerald-700",
+      iconBg: "bg-emerald-500",
+    },
+    {
+      title: "Conversion Rate",
+      value: `${conversionRate}%`,
+      sub: `${wonLeads.length} deals won`,
+      icon: TrendingUp,
+      cardBg: "bg-violet-600",
+      cardGlow: "from-violet-600 to-violet-700",
+      iconBg: "bg-violet-500",
+    },
+    {
+      title: "Total Pipeline",
+      value: formatDeal(totalPipeline),
+      sub: `${formatDeal(wonRevenue)} closed`,
+      icon: DollarSign,
+      cardBg: "bg-orange-500",
+      cardGlow: "from-orange-500 to-orange-600",
+      iconBg: "bg-orange-400",
+    },
+  ];
+
   return (
-    <div className="p-6 max-w-7xl">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-6 max-w-7xl space-y-6">
+      {/* Page header */}
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Your sales overview for today</p>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Dashboard</h1>
+          <p className="text-sm text-slate-500 mt-0.5">Your AI-powered sales overview</p>
         </div>
         <div className="flex items-center gap-2">
           <Link href="/leads">
-            <Button size="sm" variant="outline">
-              <Plus className="w-4 h-4 mr-1.5" />
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-slate-200 text-slate-700 hover:bg-slate-50 h-9"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1.5" />
               Add Lead
             </Button>
           </Link>
           <Link href="/pipeline">
-            <Button size="sm" className="bg-orange-600 hover:bg-orange-700">
-              <Kanban className="w-4 h-4 mr-1.5" />
+            <Button
+              size="sm"
+              className="bg-orange-600 hover:bg-orange-700 h-9 shadow-sm shadow-orange-200"
+            >
+              <Kanban className="w-3.5 h-3.5 mr-1.5" />
               Pipeline
             </Button>
           </Link>
@@ -162,87 +229,118 @@ export default function Dashboard() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {[
-          { title: "Total Leads", value: totalLeads.toString(), sub: `${topLeads.length} AI-scored`, icon: Users, color: "text-blue-600", bg: "bg-blue-50", trend: "+12% this month" },
-          { title: "Active Campaigns", value: activeCampaigns.toString(), sub: "Running now", icon: Target, color: "text-green-600", bg: "bg-green-50", trend: "" },
-          { title: "Conversion Rate", value: `${conversionRate}%`, sub: `${wonLeads.length} deals won`, icon: TrendingUp, color: "text-purple-600", bg: "bg-purple-50", trend: "" },
-          { title: "Total Pipeline", value: formatDeal(totalPipeline), sub: `${formatDeal(wonRevenue)} won`, icon: DollarSign, color: "text-orange-600", bg: "bg-orange-50", trend: "" },
-        ].map((card) => (
-          <Card key={card.title} className="hover:shadow-md transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
-              <CardTitle className="text-xs font-medium text-gray-500 uppercase tracking-wider">{card.title}</CardTitle>
-              <div className={`p-1.5 rounded-lg ${card.bg}`}>
-                <card.icon className={`h-4 w-4 ${card.color}`} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {statCards.map((card) => (
+          <div
+            key={card.title}
+            className={`relative overflow-hidden rounded-xl bg-gradient-to-br ${card.cardGlow} p-5 shadow-md hover:shadow-lg transition-all duration-200`}
+          >
+            {/* Decorative circle */}
+            <div className="absolute -top-4 -right-4 w-20 h-20 rounded-full bg-white/10" />
+            <div className="absolute -bottom-6 -right-2 w-16 h-16 rounded-full bg-white/5" />
+            <div className="relative">
+              <div className={`inline-flex p-2 rounded-lg ${card.iconBg} mb-3`}>
+                <card.icon className="h-4 w-4 text-white" />
               </div>
-            </CardHeader>
-            <CardContent className="px-4 pb-4">
-              <div className="text-2xl font-bold text-gray-900">{card.value}</div>
-              <p className="text-xs text-gray-500 mt-0.5">{card.sub}</p>
-            </CardContent>
-          </Card>
+              <div className="text-2xl font-bold text-white tracking-tight">{card.value}</div>
+              <p className="text-xs font-semibold text-white/70 uppercase tracking-wider mt-1">{card.title}</p>
+              <p className="text-xs text-white/50 mt-0.5">{card.sub}</p>
+            </div>
+          </div>
         ))}
       </div>
 
-      {/* AI Insights banner */}
+      {/* AI Copilot banner */}
       {avgScore > 0 && (
-        <div className="mb-6 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 p-4 flex items-center gap-4 text-white">
-          <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
-            <Brain className="w-5 h-5" />
+        <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 p-5 shadow-lg shadow-violet-200/40">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_right,rgba(255,255,255,0.08)_0%,transparent_60%)]" />
+          <div className="relative flex items-center gap-4 text-white">
+            <div className="w-11 h-11 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0 border border-white/20">
+              <Brain className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <p className="font-semibold text-sm">Hubspot AI Insight</p>
+                <span className="px-1.5 py-0.5 rounded-full bg-white/15 text-xs font-medium border border-white/20">
+                  Live
+                </span>
+              </div>
+              <p className="text-xs text-purple-200 leading-relaxed">
+                Your top {topLeads.length} leads average{" "}
+                <span className="font-bold text-white">{avgScore}/100</span> AI score.
+                {topLeads[0] &&
+                  ` ${topLeads[0].name} at ${topLeads[0].company} is your hottest opportunity right now.`}
+              </p>
+            </div>
+            <Link href="/leads">
+              <Button
+                size="sm"
+                className="bg-white text-violet-700 hover:bg-purple-50 flex-shrink-0 font-semibold shadow-sm h-8"
+              >
+                <Zap className="w-3.5 h-3.5 mr-1.5" />
+                Act Now
+              </Button>
+            </Link>
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-semibold text-sm">AI Copilot Insight</p>
-            <p className="text-xs text-purple-100 mt-0.5">
-              Your top {topLeads.length} leads have an average AI score of <span className="font-bold text-white">{avgScore}/100</span>.
-              {topLeads[0] && ` ${topLeads[0].name} at ${topLeads[0].company} is your hottest lead.`}
-            </p>
-          </div>
-          <Link href="/leads">
-            <Button size="sm" className="bg-white text-purple-700 hover:bg-purple-50 flex-shrink-0">
-              <Zap className="w-3.5 h-3.5 mr-1" />
-              Act Now
-            </Button>
-          </Link>
         </div>
       )}
 
       {/* Main grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Pipeline overview */}
-        <Card className="lg:col-span-2">
-          <CardHeader className="pb-3">
+        <Card className="lg:col-span-2 border-slate-200 shadow-sm">
+          <CardHeader className="pb-4 pt-5 px-5">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-base">Pipeline Overview</CardTitle>
-                <CardDescription>Deal stages and values</CardDescription>
+                <CardTitle className="text-sm font-semibold text-slate-900">
+                  Pipeline Overview
+                </CardTitle>
+                <p className="text-xs text-slate-500 mt-0.5">Deal stages and values</p>
               </div>
               <Link href="/pipeline">
-                <Button variant="ghost" size="sm" className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 h-7 text-xs">
-                  Full board <ArrowUpRight className="w-3 h-3 ml-1" />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 h-7 text-xs gap-1"
+                >
+                  Full board
+                  <ArrowUpRight className="w-3 h-3" />
                 </Button>
               </Link>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-5 pb-5">
             {leads.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <Kanban className="w-10 h-10 text-gray-300 mb-2" />
-                <p className="text-sm text-gray-500">No pipeline data yet. Add leads to get started.</p>
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mb-3">
+                  <Kanban className="w-6 h-6 text-slate-400" />
+                </div>
+                <p className="text-sm font-medium text-slate-700">No pipeline data yet</p>
+                <p className="text-xs text-slate-400 mt-1">Add leads to see your pipeline</p>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-3.5">
                 {pipelineStages.map(({ stage, label, bar, count, value }) => (
                   <div key={stage} className="flex items-center gap-3">
-                    <div className="w-20 text-xs font-medium text-gray-600">{label}</div>
+                    <div className="w-[88px] text-xs font-medium text-slate-600 flex-shrink-0">
+                      {label}
+                    </div>
                     <div className="flex-1">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-gray-500">{count} leads</span>
-                        <span className="text-xs font-medium text-gray-700">{formatDeal(value)}</span>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs text-slate-400">{count} leads</span>
+                        <span className="text-xs font-semibold text-slate-700">
+                          {formatDeal(value)}
+                        </span>
                       </div>
-                      <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                      <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all duration-700 ${bar}`}
-                          style={{ width: totalLeads > 0 ? `${(count / totalLeads) * 100}%` : "0%" }}
+                          style={{
+                            width:
+                              totalLeads > 0
+                                ? `${(count / totalLeads) * 100}%`
+                                : "0%",
+                          }}
                         />
                       </div>
                     </div>
@@ -253,49 +351,66 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Top AI-scored leads */}
-        <Card>
-          <CardHeader className="pb-3">
+        {/* Top AI leads */}
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader className="pb-4 pt-5 px-5">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-base flex items-center gap-1.5">
-                  <Brain className="w-4 h-4 text-purple-500" />
+                <CardTitle className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+                  <Brain className="w-3.5 h-3.5 text-violet-500" />
                   Top AI Leads
                 </CardTitle>
-                <CardDescription>Highest scored by AI</CardDescription>
+                <p className="text-xs text-slate-500 mt-0.5">Highest AI scores</p>
               </div>
               <Link href="/leads">
-                <Button variant="ghost" size="sm" className="text-orange-600 hover:bg-orange-50 h-7 text-xs">
-                  All <ArrowUpRight className="w-3 h-3 ml-1" />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-orange-600 hover:bg-orange-50 h-7 text-xs gap-1"
+                >
+                  All
+                  <ArrowUpRight className="w-3 h-3" />
                 </Button>
               </Link>
             </div>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="px-5 pb-5 space-y-1">
             {topLeads.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <Star className="w-8 h-8 text-gray-300 mb-2" />
-                <p className="text-xs text-gray-500">No scored leads yet.</p>
+              <div className="flex flex-col items-center justify-center py-10 text-center">
+                <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center mb-3">
+                  <Star className="w-5 h-5 text-slate-400" />
+                </div>
+                <p className="text-xs text-slate-500">No scored leads yet.</p>
               </div>
             ) : (
-              topLeads.map((lead) => (
-                <Link href={`/leads/${lead.id}`} key={lead.id}>
-                  <div className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer">
-                    <Avatar className="w-7 h-7">
-                      <AvatarFallback className="text-xs">{getInitials(lead.name)}</AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">{lead.name}</p>
-                      <p className="text-xs text-gray-500 truncate flex items-center gap-1">
-                        <Building2 className="w-3 h-3" /> {lead.company}
-                      </p>
+              topLeads.map((lead) => {
+                const badge = getScoreBadge(lead.ai_score);
+                return (
+                  <Link href={`/leads/${lead.id}`} key={lead.id}>
+                    <div className="flex items-center gap-3 px-2 py-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer group">
+                      <Avatar className="w-7 h-7 flex-shrink-0">
+                        <AvatarFallback className="text-xs bg-orange-100 text-orange-700 font-semibold">
+                          {getInitials(lead.name)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-slate-800 truncate">
+                          {lead.name}
+                        </p>
+                        <p className="text-xs text-slate-400 truncate flex items-center gap-1">
+                          <Building2 className="w-2.5 h-2.5" />
+                          {lead.company}
+                        </p>
+                      </div>
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold flex-shrink-0 ${badge.cls}`}
+                      >
+                        {badge.label}
+                      </span>
                     </div>
-                    <div className={`text-sm font-bold ${getScoreColor(lead.ai_score)}`}>
-                      {lead.ai_score}
-                    </div>
-                  </div>
-                </Link>
-              ))
+                  </Link>
+                );
+              })
             )}
           </CardContent>
         </Card>
@@ -303,42 +418,54 @@ export default function Dashboard() {
 
       {/* Bottom grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Recent activity */}
-        <Card>
-          <CardHeader className="pb-3">
+        {/* Recent leads */}
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader className="pb-4 pt-5 px-5">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-base flex items-center gap-1.5">
-                  <Activity className="w-4 h-4 text-blue-500" />
+                <CardTitle className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+                  <Activity className="w-3.5 h-3.5 text-blue-500" />
                   Recent Leads
                 </CardTitle>
-                <CardDescription>Newly added contacts</CardDescription>
+                <p className="text-xs text-slate-500 mt-0.5">Newly added contacts</p>
               </div>
             </div>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="px-5 pb-5 space-y-1">
             {recentLeads.length === 0 ? (
-              <div className="text-center py-8">
-                <Users className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                <p className="text-xs text-gray-500">No leads added yet.</p>
+              <div className="flex flex-col items-center justify-center py-10 text-center">
+                <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center mb-3">
+                  <Users className="w-5 h-5 text-slate-400" />
+                </div>
+                <p className="text-xs text-slate-500">No leads added yet.</p>
               </div>
             ) : (
               recentLeads.map((lead) => (
                 <Link href={`/leads/${lead.id}`} key={lead.id}>
-                  <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors">
-                    <div className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
-                    <Avatar className="w-7 h-7">
-                      <AvatarFallback className="text-xs">{getInitials(lead.name)}</AvatarFallback>
+                  <div className="flex items-center gap-3 px-2 py-2.5 rounded-lg hover:bg-slate-50 transition-colors group">
+                    <div className="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" />
+                    <Avatar className="w-7 h-7 flex-shrink-0">
+                      <AvatarFallback className="text-xs bg-slate-100 text-slate-600 font-semibold">
+                        {getInitials(lead.name)}
+                      </AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">{lead.name}</p>
-                      <p className="text-xs text-gray-500 truncate">{lead.company}</p>
+                      <p className="text-xs font-semibold text-slate-800 truncate">
+                        {lead.name}
+                      </p>
+                      <p className="text-xs text-slate-400 truncate">{lead.company}</p>
                     </div>
                     <div className="flex-shrink-0 text-right">
-                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${getPipelineStage(lead.status).badge}`}>
+                      <span
+                        className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${
+                          getPipelineStage(lead.status).badge
+                        }`}
+                      >
                         {getPipelineStage(lead.status).label}
                       </span>
-                      <p className="text-xs text-gray-400 mt-0.5">{new Date(lead.created_at).toLocaleDateString()}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        {new Date(lead.created_at).toLocaleDateString()}
+                      </p>
                     </div>
                   </div>
                 </Link>
@@ -348,29 +475,83 @@ export default function Dashboard() {
         </Card>
 
         {/* Quick actions */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-1.5">
-              <Zap className="w-4 h-4 text-orange-500" />
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader className="pb-4 pt-5 px-5">
+            <CardTitle className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-orange-500" />
               Quick Actions
             </CardTitle>
-            <CardDescription>Jump to common tasks</CardDescription>
+            <p className="text-xs text-slate-500 mt-0.5">Jump to common tasks</p>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-3">
+          <CardContent className="px-5 pb-5">
+            <div className="grid grid-cols-2 gap-2.5">
               {[
-                { label: "Add Lead", sub: "Import prospects", icon: Users, href: "/leads", color: "text-blue-600", bg: "bg-blue-50 hover:bg-blue-100" },
-                { label: "Pipeline Board", sub: "Manage stages", icon: Kanban, href: "/pipeline", color: "text-purple-600", bg: "bg-purple-50 hover:bg-purple-100" },
-                { label: "Campaign Planner", sub: "AI-powered campaigns", icon: Target, href: "/campaign", color: "text-green-600", bg: "bg-green-50 hover:bg-green-100" },
-                { label: "Companies", sub: "Org accounts", icon: Building2, href: "/companies", color: "text-orange-600", bg: "bg-orange-50 hover:bg-orange-100" },
-                { label: "Contacts", sub: "All contacts", icon: Users, href: "/contacts", color: "text-teal-600", bg: "bg-teal-50 hover:bg-teal-100" },
-                { label: "Analytics", sub: "View reports", icon: BarChart3, href: "/dashboard", color: "text-gray-600", bg: "bg-gray-50 hover:bg-gray-100" },
+                {
+                  label: "Add Lead",
+                  sub: "Import prospects",
+                  icon: Users,
+                  href: "/leads",
+                  iconColor: "text-blue-600",
+                  iconBg: "bg-blue-50",
+                  hoverBg: "hover:bg-blue-50",
+                },
+                {
+                  label: "Pipeline Board",
+                  sub: "Manage stages",
+                  icon: Kanban,
+                  href: "/pipeline",
+                  iconColor: "text-violet-600",
+                  iconBg: "bg-violet-50",
+                  hoverBg: "hover:bg-violet-50",
+                },
+                {
+                  label: "Campaign Planner",
+                  sub: "AI-powered campaigns",
+                  icon: Sparkles,
+                  href: "/campaign",
+                  iconColor: "text-orange-600",
+                  iconBg: "bg-orange-50",
+                  hoverBg: "hover:bg-orange-50",
+                },
+                {
+                  label: "Companies",
+                  sub: "Org accounts",
+                  icon: Building2,
+                  href: "/companies",
+                  iconColor: "text-slate-600",
+                  iconBg: "bg-slate-100",
+                  hoverBg: "hover:bg-slate-100",
+                },
+                {
+                  label: "Contacts",
+                  sub: "All contacts",
+                  icon: Users,
+                  href: "/contacts",
+                  iconColor: "text-teal-600",
+                  iconBg: "bg-teal-50",
+                  hoverBg: "hover:bg-teal-50",
+                },
+                {
+                  label: "Analytics",
+                  sub: "View reports",
+                  icon: BarChart3,
+                  href: "/dashboard",
+                  iconColor: "text-emerald-600",
+                  iconBg: "bg-emerald-50",
+                  hoverBg: "hover:bg-emerald-50",
+                },
               ].map((action) => (
                 <Link href={action.href} key={action.label}>
-                  <div className={`p-3 rounded-xl border border-transparent ${action.bg} transition-colors cursor-pointer`}>
-                    <action.icon className={`h-5 w-5 ${action.color} mb-1.5`} />
-                    <div className="text-sm font-medium text-gray-900">{action.label}</div>
-                    <div className="text-xs text-gray-500">{action.sub}</div>
+                  <div
+                    className={`p-3.5 rounded-xl border border-slate-100 bg-white ${action.hoverBg} transition-colors cursor-pointer group`}
+                  >
+                    <div
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2.5 ${action.iconBg}`}
+                    >
+                      <action.icon className={`h-4 w-4 ${action.iconColor}`} />
+                    </div>
+                    <div className="text-xs font-semibold text-slate-800">{action.label}</div>
+                    <div className="text-xs text-slate-400 mt-0.5">{action.sub}</div>
                   </div>
                 </Link>
               ))}
