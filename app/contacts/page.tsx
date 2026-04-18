@@ -1,313 +1,625 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import Link from "next/link";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useEffect, useState, useMemo, useRef } from "react";
 import {
   Search,
   Mail,
   Phone,
   Building2,
-  Star,
-  ArrowUpRight,
+  Plus,
+  Upload,
+  X,
+  ChevronDown,
   Users,
-  Brain,
-  SlidersHorizontal,
+  Loader2,
+  ArrowUpRight,
 } from "lucide-react";
-import API, { extractArray } from "@/lib/api";
-import { getPipelineStage } from "@/lib/pipeline";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import API from "@/lib/api";
 
-interface Lead {
+interface Contact {
   id: number;
-  name: string;
-  company: string;
-  email?: string;
+  first_name: string;
+  last_name?: string;
+  email: string;
   phone?: string;
+  title?: string;
+  company_id?: number;
   industry?: string;
-  deal_size?: number;
+  lifecycle_stage?: string;
+  lead_status?: string;
   source?: string;
-  ai_score?: number;
-  status: string;
+  owner?: string;
   created_at: string;
+  company_name?: string;
 }
 
-function getInitials(name: string) {
-  return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+interface AppUser {
+  user_id: string;
+  email: string;
 }
 
-function getScoreBadge(score?: number) {
-  if (!score) return null;
-  if (score >= 80) return { label: "Hot", color: "bg-red-100 text-red-700" };
-  if (score >= 60) return { label: "Warm", color: "bg-yellow-100 text-yellow-700" };
-  return { label: "Cold", color: "bg-blue-100 text-blue-700" };
+const LIFECYCLE_COLORS: Record<string, string> = {
+  subscriber: "bg-sky-100 text-sky-700",
+  lead: "bg-blue-100 text-blue-700",
+  marketing_qualified_lead: "bg-purple-100 text-purple-700",
+  sales_qualified_lead: "bg-violet-100 text-violet-700",
+  opportunity: "bg-amber-100 text-amber-700",
+  customer: "bg-emerald-100 text-emerald-700",
+  evangelist: "bg-teal-100 text-teal-700",
+  other: "bg-slate-100 text-slate-600",
+};
+
+const LIFECYCLE_LABELS: Record<string, string> = {
+  subscriber: "Subscriber",
+  lead: "Lead",
+  marketing_qualified_lead: "MQL",
+  sales_qualified_lead: "SQL",
+  opportunity: "Opportunity",
+  customer: "Customer",
+  evangelist: "Evangelist",
+  other: "Other",
+};
+
+const LIFECYCLE_OPTIONS = [
+  { value: "subscriber", label: "Subscriber" },
+  { value: "lead", label: "Lead" },
+  { value: "marketing_qualified_lead", label: "Marketing Qualified Lead" },
+  { value: "sales_qualified_lead", label: "Sales Qualified Lead" },
+  { value: "opportunity", label: "Opportunity" },
+  { value: "customer", label: "Customer" },
+  { value: "evangelist", label: "Evangelist" },
+  { value: "other", label: "Other" },
+];
+
+const AVATAR_GRADIENTS = [
+  "from-indigo-500 to-indigo-600",
+  "from-violet-500 to-violet-600",
+  "from-emerald-500 to-emerald-600",
+  "from-orange-500 to-orange-600",
+  "from-pink-500 to-pink-600",
+  "from-teal-500 to-teal-600",
+  "from-blue-500 to-blue-600",
+];
+
+function avatarGradient(name: string) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return AVATAR_GRADIENTS[Math.abs(h) % AVATAR_GRADIENTS.length];
 }
+
+function getInitials(first: string, last?: string) {
+  return ((first[0] ?? "") + (last?.[0] ?? "")).toUpperCase();
+}
+
+const BLANK = {
+  first_name: "",
+  last_name: "",
+  email: "",
+  phone: "",
+  title: "",
+  source: "",
+  industry: "",
+  lifecycle_stage: "lead",
+};
 
 export default function ContactsPage() {
-  const [leads, setLeads] = useState<Lead[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<"table" | "grid">("table");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [form, setForm] = useState({ ...BLANK });
+  const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // CSV import
+  const [importOpen, setImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importResult, setImportResult] = useState<{ created: number; updated: number; failed: number } | null>(null);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Company data for display + form search
+  const [companyMap, setCompanyMap] = useState<Record<number, string>>({});
+  const [companiesList, setCompaniesList] = useState<{ id: number; name: string; industry?: string }[]>([]);
+  const [formCompanySearch, setFormCompanySearch] = useState("");
+  const [formCompanyId, setFormCompanyId] = useState<number | null>(null);
+
+  // Owner dropdown
+  const [formOwner, setFormOwner] = useState("");
+  const [users, setUsers] = useState<AppUser[]>([]);
+
+  async function fetchContacts() {
+    try {
+      const res = await API.get("/contacts", { params: { limit: 500 } });
+      const data: Contact[] = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
+      setContacts(data);
+    } catch {
+      setContacts([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function fetchCompanies() {
+    try {
+      const res = await API.get("/companies", { params: { limit: 500 } });
+      const list: { id: number; name: string; industry?: string }[] = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
+      const map: Record<number, string> = {};
+      list.forEach((c) => { map[c.id] = c.name; });
+      setCompanyMap(map);
+      setCompaniesList(list);
+    } catch { /* ignore */ }
+  }
+
+  async function fetchUsers() {
+    try {
+      const res = await API.get("/auth/users");
+      setUsers(Array.isArray(res.data) ? res.data : []);
+    } catch { /* ignore */ }
+  }
 
   useEffect(() => {
-    API.get("/leads")
-      .then((res) => setLeads(extractArray(res.data)))
-      .finally(() => setLoading(false));
+    fetchContacts();
+    fetchCompanies();
+    fetchUsers();
   }, []);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    return leads.filter(
-      (l) =>
-        l.name.toLowerCase().includes(q) ||
-        l.company?.toLowerCase().includes(q) ||
-        l.email?.toLowerCase().includes(q) ||
-        l.industry?.toLowerCase().includes(q)
+    return contacts.filter(
+      (c) =>
+        c.first_name.toLowerCase().includes(q) ||
+        c.last_name?.toLowerCase().includes(q) ||
+        c.email.toLowerCase().includes(q) ||
+        c.title?.toLowerCase().includes(q) ||
+        (c.company_id ? companyMap[c.company_id]?.toLowerCase().includes(q) : false)
     );
-  }, [leads, search]);
+  }, [contacts, search, companyMap]);
+
+  const formCompanyResults = useMemo(() => {
+    if (!formCompanySearch) return [];
+    const q = formCompanySearch.toLowerCase();
+    return companiesList.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 8);
+  }, [companiesList, formCompanySearch]);
+
+  function openDrawer() {
+    setDrawerOpen(true);
+    setForm({ ...BLANK });
+    setFormError("");
+    setFormCompanySearch("");
+    setFormCompanyId(null);
+    setFormOwner("");
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setFormError("");
+    if (!form.first_name.trim()) { setFormError("First name is required."); return; }
+    if (!form.email.trim()) { setFormError("Email is required."); return; }
+    if (!formCompanyId) { setFormError("Company is required."); return; }
+    if (!form.source?.trim()) { setFormError("Source is required."); return; }
+    setSaving(true);
+    try {
+      await API.post("/contacts", {
+        first_name: form.first_name.trim(),
+        last_name: form.last_name?.trim() || undefined,
+        email: form.email.trim(),
+        phone: form.phone?.trim() || undefined,
+        title: form.title?.trim() || undefined,
+        source: form.source?.trim() || undefined,
+        industry: form.industry?.trim() || undefined,
+        lifecycle_stage: form.lifecycle_stage || "lead",
+        company_id: formCompanyId || undefined,
+        owner: formOwner || undefined,
+      });
+      setDrawerOpen(false);
+      setForm({ ...BLANK });
+      setFormCompanyId(null);
+      setFormCompanySearch("");
+      setFormOwner("");
+      fetchContacts();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setFormError(msg ?? "Failed to create contact.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleImport() {
+    if (!importFile) return;
+    setImporting(true);
+    setImportResult(null);
+    const fd = new FormData();
+    fd.append("file", importFile);
+    try {
+      const res = await API.post("/contacts/import-csv", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setImportResult(res.data);
+      fetchContacts();
+    } catch {
+      setImportResult({ created: 0, updated: 0, failed: -1 });
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  const statCards = [
+    { label: "Total Contacts", value: contacts.length, color: "from-indigo-600 to-indigo-700", iconBg: "bg-indigo-500" },
+    { label: "With Email", value: contacts.filter((c) => c.email).length, color: "from-emerald-600 to-emerald-700", iconBg: "bg-emerald-500" },
+    { label: "Customers", value: contacts.filter((c) => c.lifecycle_stage === "customer").length, color: "from-orange-500 to-orange-600", iconBg: "bg-orange-400" },
+    { label: "With Phone", value: contacts.filter((c) => c.phone).length, color: "from-violet-600 to-violet-700", iconBg: "bg-violet-500" },
+  ];
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <Skeleton className="h-8 w-32 mb-2" />
-            <Skeleton className="h-4 w-48" />
-          </div>
+      <div className="p-6 space-y-5">
+        <div className="h-7 bg-slate-200 rounded-lg w-32 animate-pulse" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => <div key={i} className="h-24 bg-slate-200 rounded-xl animate-pulse" />)}
         </div>
-        <Card>
-          <CardContent className="p-0">
-            {[...Array(6)].map((_, i) => (
-              <div key={i} className="flex items-center gap-4 px-4 py-4 border-b border-gray-100">
-                <Skeleton className="w-10 h-10 rounded-full" />
-                <div className="flex-1 space-y-1.5">
-                  <Skeleton className="h-4 w-32" />
-                  <Skeleton className="h-3 w-48" />
-                </div>
-                <Skeleton className="h-6 w-16 rounded-full" />
-                <Skeleton className="h-4 w-20" />
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="flex items-center gap-4 px-5 py-4 border-b border-slate-100 animate-pulse">
+              <div className="w-9 h-9 rounded-full bg-slate-200 flex-shrink-0" />
+              <div className="flex-1 space-y-2">
+                <div className="h-3.5 bg-slate-200 rounded w-32" />
+                <div className="h-3 bg-slate-100 rounded w-48" />
               </div>
-            ))}
-          </CardContent>
-        </Card>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="p-6">
+    <div className="p-6 space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Contacts</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{leads.length} contacts across all companies</p>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Contacts</h1>
+          <p className="text-sm text-slate-500 mt-0.5">{contacts.length} contacts</p>
         </div>
         <div className="flex items-center gap-2">
           <Button
-            variant={view === "table" ? "default" : "outline"}
+            variant="outline"
             size="sm"
-            onClick={() => setView("table")}
-            className={view === "table" ? "bg-orange-600 hover:bg-orange-700" : ""}
+            className="h-8 text-xs font-semibold border-slate-200"
+            onClick={() => { setImportOpen(true); setImportResult(null); setImportFile(null); }}
           >
-            List
+            <Upload className="w-3.5 h-3.5 mr-1.5" />
+            Import CSV
           </Button>
           <Button
-            variant={view === "grid" ? "default" : "outline"}
             size="sm"
-            onClick={() => setView("grid")}
-            className={view === "grid" ? "bg-orange-600 hover:bg-orange-700" : ""}
+            className="bg-orange-600 hover:bg-orange-700 h-8 text-xs font-semibold"
+            onClick={openDrawer}
           >
-            Grid
+            <Plus className="w-3.5 h-3.5 mr-1" />
+            Add Contact
           </Button>
         </div>
       </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        {[
-          { label: "Total Contacts", value: leads.length, icon: Users, color: "text-blue-600", bg: "bg-blue-50" },
-          { label: "Hot Leads", value: leads.filter((l) => (l.ai_score ?? 0) >= 80).length, icon: Star, color: "text-red-600", bg: "bg-red-50" },
-          { label: "With Email", value: leads.filter((l) => l.email).length, icon: Mail, color: "text-green-600", bg: "bg-green-50" },
-          { label: "AI Scored", value: leads.filter((l) => l.ai_score !== undefined).length, icon: Brain, color: "text-purple-600", bg: "bg-purple-50" },
-        ].map((stat) => (
-          <Card key={stat.label} className="hover:shadow-md transition-shadow">
-            <CardContent className="p-4 flex items-center gap-3">
-              <div className={`p-2 rounded-lg ${stat.bg}`}>
-                <stat.icon className={`w-4 h-4 ${stat.color}`} />
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {statCards.map((card) => (
+          <div key={card.label} className={`relative overflow-hidden rounded-xl bg-gradient-to-br ${card.color} p-5 shadow-md`}>
+            <div className="absolute -top-4 -right-4 w-20 h-20 rounded-full bg-white/10" />
+            <div className="relative">
+              <div className={`inline-flex p-2 rounded-lg ${card.iconBg} mb-3`}>
+                <Users className="h-4 w-4 text-white" />
               </div>
-              <div>
-                <p className="text-xl font-bold text-gray-900">{stat.value}</p>
-                <p className="text-xs text-gray-500">{stat.label}</p>
-              </div>
-            </CardContent>
-          </Card>
+              <div className="text-2xl font-bold text-white">{card.value}</div>
+              <p className="text-xs font-semibold text-white/60 uppercase tracking-wider mt-0.5">{card.label}</p>
+            </div>
+          </div>
         ))}
       </div>
 
-      {/* Search bar */}
-      <div className="flex items-center gap-3 mb-4">
+      {/* Search */}
+      <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <Input
-            placeholder="Search contacts..."
+            placeholder="Search contacts…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
+            className="pl-9 bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 h-9"
           />
         </div>
-        <Button variant="outline" size="sm">
-          <SlidersHorizontal className="w-4 h-4 mr-2" />
-          Filter
-        </Button>
+        <span className="text-xs text-slate-400 font-medium">{filtered.length} result{filtered.length !== 1 ? "s" : ""}</span>
       </div>
 
-      {/* Empty state */}
-      {filtered.length === 0 && (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <Users className="w-12 h-12 text-gray-300 mb-3" />
-            <h3 className="text-lg font-medium text-gray-900 mb-1">No contacts found</h3>
-            <p className="text-gray-500 text-sm mb-4">Try adjusting your search or add new leads.</p>
-            <Link href="/leads">
-              <Button className="bg-orange-600 hover:bg-orange-700">View Leads</Button>
-            </Link>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Table view */}
-      {view === "table" && filtered.length > 0 && (
-        <Card className="overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Contact</TableHead>
-                <TableHead>Company</TableHead>
-                <TableHead>Industry</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>AI Score</TableHead>
-                <TableHead>Contact</TableHead>
-                <TableHead className="w-16"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((lead) => {
-                const scoreBadge = getScoreBadge(lead.ai_score);
+      {/* Table */}
+      {filtered.length === 0 ? (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center py-16 text-center">
+          <div className="w-14 h-14 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mb-4">
+            <Users className="w-6 h-6 text-slate-400" />
+          </div>
+          <h3 className="text-sm font-semibold text-slate-700 mb-1">No contacts found</h3>
+          <p className="text-slate-400 text-xs mb-5">Import a CSV or add your first contact.</p>
+          <Button size="sm" className="bg-orange-600 hover:bg-orange-700 h-8 text-xs font-semibold" onClick={openDrawer}>
+            <Plus className="w-3.5 h-3.5 mr-1" />
+            Add Contact
+          </Button>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                {["Contact", "Title", "Company", "Industry", "Lifecycle", "Owner", "Reach", ""].map((h) => (
+                  <th key={h} className="text-left py-3 px-5 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((contact) => {
+                const fullName = `${contact.first_name} ${contact.last_name ?? ""}`.trim();
+                const grad = avatarGradient(fullName);
+                const lcColor = LIFECYCLE_COLORS[contact.lifecycle_stage ?? "other"] ?? "bg-slate-100 text-slate-600";
+                const lcLabel = LIFECYCLE_LABELS[contact.lifecycle_stage ?? "other"] ?? contact.lifecycle_stage ?? "—";
+                const companyName = contact.company_id ? companyMap[contact.company_id] : undefined;
                 return (
-                  <TableRow key={lead.id} className="cursor-pointer">
-                    <TableCell>
+                  <tr key={contact.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                    <td className="py-3.5 px-5">
                       <div className="flex items-center gap-3">
-                        <Avatar className="w-8 h-8">
-                          <AvatarFallback className="text-xs">{getInitials(lead.name)}</AvatarFallback>
-                        </Avatar>
+                        <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${grad} flex items-center justify-center text-xs font-bold text-white flex-shrink-0`}>
+                          {getInitials(contact.first_name, contact.last_name)}
+                        </div>
                         <div>
-                          <p className="font-medium text-gray-900 text-sm">{lead.name}</p>
-                          <p className="text-xs text-gray-500">{new Date(lead.created_at).toLocaleDateString()}</p>
+                          <p className="font-semibold text-slate-900 text-sm">{fullName}</p>
+                          <p className="text-xs text-slate-400">{contact.email}</p>
                         </div>
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5 text-sm text-gray-700">
-                        <Building2 className="w-3.5 h-3.5 text-gray-400" />
-                        {lead.company}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {lead.industry ? (
-                        <Badge variant="secondary" className="text-xs">{lead.industry}</Badge>
-                      ) : <span className="text-gray-400 text-xs">—</span>}
-                    </TableCell>
-                    <TableCell>
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getPipelineStage(lead.status).badge}`}>
-                        {getPipelineStage(lead.status).label}
+                    </td>
+                    <td className="py-3.5 px-5 text-sm text-slate-600">
+                      {contact.title ?? <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="py-3.5 px-5">
+                      {companyName ? (
+                        <div className="flex items-center gap-1.5 text-sm text-slate-700">
+                          <Building2 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                          <span className="font-medium">{companyName}</span>
+                        </div>
+                      ) : <span className="text-slate-300 text-xs">—</span>}
+                    </td>
+                    <td className="py-3.5 px-5">
+                      {contact.industry ? (
+                        <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
+                          {contact.industry}
+                        </span>
+                      ) : <span className="text-slate-300 text-xs">—</span>}
+                    </td>
+                    <td className="py-3.5 px-5">
+                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${lcColor}`}>
+                        {lcLabel}
                       </span>
-                    </TableCell>
-                    <TableCell>
-                      {lead.ai_score !== undefined ? (
-                        <div className="flex items-center gap-1.5">
-                          <Star className="w-3.5 h-3.5 text-yellow-500" />
-                          <span className="text-sm font-medium">{lead.ai_score}</span>
-                          {scoreBadge && (
-                            <span className={`text-xs px-1.5 py-0.5 rounded-full ${scoreBadge.color}`}>{scoreBadge.label}</span>
-                          )}
-                        </div>
-                      ) : <span className="text-gray-400 text-xs">Not scored</span>}
-                    </TableCell>
-                    <TableCell>
+                    </td>
+                    <td className="py-3.5 px-5 text-xs text-slate-500">
+                      {contact.owner ? (
+                        <span className="truncate max-w-[120px] block">{contact.owner}</span>
+                      ) : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="py-3.5 px-5">
                       <div className="flex items-center gap-2">
-                        {lead.email && (
-                          <a href={`mailto:${lead.email}`} className="text-gray-400 hover:text-blue-600 transition-colors" onClick={(e) => e.stopPropagation()}>
+                        {contact.email && (
+                          <a href={`mailto:${contact.email}`} className="text-slate-400 hover:text-indigo-600 transition-colors" onClick={(e) => e.stopPropagation()}>
                             <Mail className="w-3.5 h-3.5" />
                           </a>
                         )}
-                        {lead.phone && (
-                          <a href={`tel:${lead.phone}`} className="text-gray-400 hover:text-green-600 transition-colors" onClick={(e) => e.stopPropagation()}>
+                        {contact.phone && (
+                          <a href={`tel:${contact.phone}`} className="text-slate-400 hover:text-emerald-600 transition-colors" onClick={(e) => e.stopPropagation()}>
                             <Phone className="w-3.5 h-3.5" />
                           </a>
                         )}
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <Link href={`/leads/${lead.id}`}>
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
-                          <ArrowUpRight className="w-3.5 h-3.5" />
-                        </Button>
-                      </Link>
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                    <td className="py-3.5 px-5">
+                      <a href={`/leads?contact_id=${contact.id}`} className="p-1.5 rounded-lg hover:bg-orange-50 text-slate-400 hover:text-orange-600 transition-colors inline-flex">
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                      </a>
+                    </td>
+                  </tr>
                 );
               })}
-            </TableBody>
-          </Table>
-        </Card>
+            </tbody>
+          </table>
+        </div>
       )}
 
-      {/* Grid view */}
-      {view === "grid" && filtered.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filtered.map((lead) => {
-            const scoreBadge = getScoreBadge(lead.ai_score);
-            return (
-              <Link href={`/leads/${lead.id}`} key={lead.id}>
-                <Card className="hover:shadow-md transition-all duration-150 cursor-pointer group">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between mb-3">
-                      <Avatar className="w-10 h-10">
-                        <AvatarFallback>{getInitials(lead.name)}</AvatarFallback>
-                      </Avatar>
-                      {scoreBadge && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${scoreBadge.color}`}>{scoreBadge.label}</span>
-                      )}
-                    </div>
-                    <h3 className="font-semibold text-gray-900 text-sm group-hover:text-orange-600 transition-colors">{lead.name}</h3>
-                    <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
-                      <Building2 className="w-3 h-3" /> {lead.company}
-                    </p>
-                    {lead.industry && (
-                      <Badge variant="secondary" className="text-xs mt-2">{lead.industry}</Badge>
-                    )}
-                    <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
-                      <div className="flex items-center gap-2">
-                        {lead.email && <Mail className="w-3.5 h-3.5 text-gray-400" />}
-                        {lead.phone && <Phone className="w-3.5 h-3.5 text-gray-400" />}
+      {/* Add Contact Drawer */}
+      {drawerOpen && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/30" onClick={() => setDrawerOpen(false)} />
+          <div className="w-full max-w-md bg-white shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+              <h2 className="text-base font-bold text-slate-900">Add Contact</h2>
+              <button onClick={() => setDrawerOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
+              {formError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">{formError}</div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 mb-1 block">First Name *</label>
+                  <Input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} className="h-9 text-sm" placeholder="John" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 mb-1 block">Last Name</label>
+                  <Input value={form.last_name ?? ""} onChange={(e) => setForm({ ...form, last_name: e.target.value })} className="h-9 text-sm" placeholder="Doe" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 mb-1 block">Email *</label>
+                <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="h-9 text-sm" placeholder="john@example.com" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 mb-1 block">Phone</label>
+                <Input value={form.phone ?? ""} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="h-9 text-sm" placeholder="+91 98765 43210" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 mb-1 block">Job Title</label>
+                <Input value={form.title ?? ""} onChange={(e) => setForm({ ...form, title: e.target.value })} className="h-9 text-sm" placeholder="VP Sales" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 mb-1 block">
+                  Industry
+                  {formCompanyId !== null && form.industry && (
+                    <span className="ml-1 text-[10px] text-orange-500 normal-case font-normal">(from company)</span>
+                  )}
+                </label>
+                <Input
+                  value={form.industry ?? ""}
+                  onChange={(e) => setForm({ ...form, industry: e.target.value })}
+                  readOnly={formCompanyId !== null}
+                  className={`h-9 text-sm ${formCompanyId !== null ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
+                  placeholder="Technology, Logistics…"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 mb-1 block">Source *</label>
+                <Input value={form.source ?? ""} onChange={(e) => setForm({ ...form, source: e.target.value })} className="h-9 text-sm" placeholder="LinkedIn, referral…" />
+              </div>
+
+              {/* Lifecycle Stage */}
+              <div>
+                <label className="text-xs font-semibold text-slate-700 mb-1 block">Lifecycle Stage</label>
+                <div className="relative">
+                  <select
+                    value={form.lifecycle_stage ?? "lead"}
+                    onChange={(e) => setForm({ ...form, lifecycle_stage: e.target.value })}
+                    className="w-full h-9 border border-slate-200 rounded-lg px-3 text-sm text-slate-900 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    {LIFECYCLE_OPTIONS.map(({ value, label }) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                </div>
+              </div>
+
+              {/* Company (mandatory) */}
+              <div>
+                <label className="text-xs font-semibold text-slate-700 mb-1 block">Company *</label>
+                {formCompanyId !== null ? (
+                  <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
+                    <Building2 className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+                    <span className="text-sm font-semibold text-slate-800 flex-1">{companyMap[formCompanyId]}</span>
+                    <button type="button" onClick={() => { setFormCompanyId(null); setFormCompanySearch(""); setForm((prev) => ({ ...prev, industry: "" })); }} className="text-slate-400 hover:text-slate-600">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <Input
+                      placeholder="Search company…"
+                      value={formCompanySearch}
+                      onChange={(e) => setFormCompanySearch(e.target.value)}
+                      className="h-9 text-sm"
+                    />
+                    {formCompanyResults.length > 0 && (
+                      <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden">
+                        {formCompanyResults.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => {
+                              setFormCompanyId(c.id);
+                              setFormCompanySearch("");
+                              if (c.industry) setForm((prev) => ({ ...prev, industry: c.industry! }));
+                            }}
+                            className="w-full px-3 py-2.5 text-left hover:bg-orange-50 border-b border-slate-100 last:border-0 transition-colors"
+                          >
+                            <p className="text-sm font-semibold text-slate-800">{c.name}</p>
+                            {c.industry && <p className="text-xs text-slate-400">{c.industry}</p>}
+                          </button>
+                        ))}
                       </div>
-                      {lead.ai_score !== undefined && (
-                        <div className="flex items-center gap-1 text-xs text-gray-600">
-                          <Star className="w-3 h-3 text-yellow-500" />
-                          <span className="font-medium">{lead.ai_score}</span>
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Contact Owner (non-mandatory) */}
+              {users.length > 0 && (
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 mb-1 block">Contact Owner</label>
+                  <div className="relative">
+                    <select
+                      value={formOwner}
+                      onChange={(e) => setFormOwner(e.target.value)}
+                      className="w-full h-9 border border-slate-200 rounded-lg px-3 text-sm text-slate-900 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-orange-500"
+                    >
+                      <option value="">None</option>
+                      {users.map((u) => (
+                        <option key={u.user_id} value={u.email}>{u.email}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-2">
+                <Button type="submit" disabled={saving} className="w-full bg-orange-600 hover:bg-orange-700 h-9 text-sm font-semibold">
+                  {saving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving…</> : "Add Contact"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CSV Import Modal */}
+      {importOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setImportOpen(false)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-slate-900">Import Contacts CSV</h2>
+              <button onClick={() => setImportOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              CSV must include: <code className="bg-slate-100 px-1 rounded">first_name</code>, <code className="bg-slate-100 px-1 rounded">email</code>. Optional: last_name, phone, title, company, source.
+            </p>
+            <div
+              className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center cursor-pointer hover:border-orange-400 transition-colors"
+              onClick={() => fileRef.current?.click()}
+            >
+              <Upload className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+              {importFile ? (
+                <p className="text-sm font-semibold text-slate-700">{importFile.name}</p>
+              ) : (
+                <p className="text-sm text-slate-400">Click to select CSV file</p>
+              )}
+              <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={(e) => setImportFile(e.target.files?.[0] ?? null)} />
+            </div>
+            {importResult && (
+              <div className={`rounded-lg px-4 py-3 text-sm ${importResult.failed === -1 ? "bg-red-50 text-red-700 border border-red-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"}`}>
+                {importResult.failed === -1
+                  ? "Import failed. Check your CSV format."
+                  : `Created: ${importResult.created} · Updated: ${importResult.updated} · Failed: ${importResult.failed}`}
+              </div>
+            )}
+            <Button
+              onClick={handleImport}
+              disabled={!importFile || importing}
+              className="w-full bg-orange-600 hover:bg-orange-700 h-9 text-sm font-semibold"
+            >
+              {importing ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Importing…</> : "Import"}
+            </Button>
+          </div>
         </div>
       )}
     </div>
