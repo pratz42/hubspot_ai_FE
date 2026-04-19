@@ -42,6 +42,7 @@ import {
 import API, { extractArray } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import { getPipelineStage, PIPELINE_STAGE_ORDER } from "@/lib/pipeline";
+import { Pagination } from "@/components/pagination";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -54,7 +55,7 @@ const BLANK_FORM = {
 };
 
 interface EvidenceCard {
-  points: number;
+  points?: number;
   reason: string;
   strength: "low" | "medium" | "high";
   source_url: string;
@@ -209,10 +210,10 @@ interface ScoreBreakdown {
 
 const parseScoreBreakdown = (scoreComment?: string): ScoreBreakdown | null => {
   if (!scoreComment) return null;
-  const intentMatch = scoreComment.match(/intent\s+([\d.]+)\/([\d]+)/i);
-  const evidenceMatch = scoreComment.match(/[Ee]vidence\s+([\d.]+)\/([\d]+)/i);
+  const intentMatch = scoreComment.match(/intent\s+(?:subtotal\s+)?([\d.]+)\/([\d]+)/i);
+  const evidenceMatch = scoreComment.match(/evidence\s+(?:subtotal\s+)?([\d.]+)\/([\d]+)/i);
   const items: ScoreBreakdown["items"] = [];
-  const itemRegex = /(intent|evidence):\s*([^+\-\n]+?)\s*([+-][\d.]+)\s*->\s*([\d.]+)/gi;
+  const itemRegex = /(intent|evidence):\s*([^\n]+?):\s*([+-][\d.]+)\s*->\s*([\d.]+)/gi;
   let match;
   while ((match = itemRegex.exec(scoreComment)) !== null) {
     items.push({ category: match[1].toLowerCase(), label: match[2].trim(), delta: parseFloat(match[3]), running: parseFloat(match[4]) });
@@ -227,10 +228,12 @@ const parseScoreBreakdown = (scoreComment?: string): ScoreBreakdown | null => {
   };
 };
 
+const BREAKDOWN_RE = /(?:exact\s+)?score\s+breakdown:/i;
+
 const getScoreNarrative = (scoreComment?: string): string | undefined => {
   if (!scoreComment) return undefined;
-  const idx = scoreComment.indexOf("Score breakdown:");
-  const narrative = idx === -1 ? scoreComment : scoreComment.substring(0, idx).trim();
+  const match = BREAKDOWN_RE.exec(scoreComment);
+  const narrative = match ? scoreComment.substring(0, match.index).trim() : scoreComment;
   return narrative || undefined;
 };
 
@@ -239,9 +242,12 @@ const countActiveFilters = (f: ActiveFilters) =>
 
 /* ── Main component ──────────────────────────────────────────────────── */
 
+const PER_PAGE = 25;
+
 export default function LeadsPage() {
-  const [leads, setLeads] = useState<Lead[]>([]);
   const [filteredLeads, setFilteredLeads] = useState<Lead[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [error, setError] = useState("");
@@ -279,24 +285,19 @@ export default function LeadsPage() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { fetchLeads(); fetchFilterOptions(); }, []);
+  useEffect(() => { fetchFilterOptions(); }, []);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchLeads(false, filters, page); }, [page]);
 
   useEffect(() => {
-    const term = searchTerm.toLowerCase();
-    setFilteredLeads(
-      leads.filter(
-        (l) =>
-          l.name.toLowerCase().includes(term) ||
-          l.company.toLowerCase().includes(term) ||
-          l.email?.toLowerCase().includes(term) ||
-          l.industry?.toLowerCase().includes(term) ||
-          l.source?.toLowerCase().includes(term) ||
-          l.comments?.toLowerCase().includes(term) ||
-          l.sales_strategy?.toLowerCase().includes(term) ||
-          l.score_comment?.toLowerCase().includes(term)
-      )
-    );
-  }, [leads, searchTerm]);
+    const t = setTimeout(() => {
+      if (page !== 1) setPage(1);
+      else fetchLeads(false, filters, 1);
+    }, 350);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm]);
 
   const buildFilterParams = (f: ActiveFilters) => {
     const params: Record<string, string> = {};
@@ -310,14 +311,19 @@ export default function LeadsPage() {
     return params;
   };
 
-  const fetchLeads = async (isRefresh = false, activeFilters?: ActiveFilters) => {
+  const fetchLeads = async (isRefresh = false, activeFilters?: ActiveFilters, p = page) => {
     if (isRefresh) setRefreshing(true);
     try {
-      const params = buildFilterParams(activeFilters ?? filters);
+      const params: Record<string, string | number> = {
+        ...buildFilterParams(activeFilters ?? filters),
+        page: p,
+        per_page: PER_PAGE,
+      };
+      if (searchTerm) params.search = searchTerm;
       const res = await API.get("/leads", { params });
       const data = extractArray<Lead>(res.data);
-      setLeads(data);
       setFilteredLeads(data);
+      setTotal(res.data?.total ?? data.length);
     } catch (err) {
       setError(getErrorMessage(err, "Unable to load leads. Please refresh the page."));
     } finally {
@@ -348,7 +354,8 @@ export default function LeadsPage() {
     setFilters({ ...pendingFilters });
     setFilterOpen(false);
     setLoading(true);
-    fetchLeads(false, pendingFilters);
+    setPage(1);
+    fetchLeads(false, pendingFilters, 1);
   };
 
   const clearFilters = () => {
@@ -357,7 +364,8 @@ export default function LeadsPage() {
     setPendingFilters(blank);
     setFilterOpen(false);
     setLoading(true);
-    fetchLeads(false, blank);
+    setPage(1);
+    fetchLeads(false, blank, 1);
   };
 
   /* ── Add / Edit drawer ── */
@@ -405,6 +413,11 @@ export default function LeadsPage() {
     try {
       const tags = form.tags.split(",").map((t) => t.trim()).filter(Boolean);
       if (editingLead) {
+        if (form.status !== "new" && !form.deal_size) { setFormError("Deal Size is required for this stage."); setSubmitting(false); return; }
+
+        const dealSizeChanged = form.deal_size !== String(editingLead.deal_size ?? "");
+        const commentsChanged = form.comments.trim() !== (editingLead.comments ?? "").trim();
+
         await API.patch(`/leads/${editingLead.id}`, {
           name: form.name.trim() || undefined,
           deal_size: form.deal_size ? parseFloat(form.deal_size) : undefined,
@@ -412,6 +425,15 @@ export default function LeadsPage() {
           comments: form.comments.trim() || undefined,
           tags,
         });
+
+        if (dealSizeChanged || commentsChanged) {
+          setRefreshing(true);
+          try {
+            await API.post(`/leads/${editingLead.id}/refresh-knowledge`, {});
+          } finally {
+            setRefreshing(false);
+          }
+        }
       } else {
         if (!selectedAssoc) { setFormError("Select a Contact or Company first."); setSubmitting(false); return; }
         if (form.status !== "new" && !form.deal_size) { setFormError("Deal Size is required for this stage."); setSubmitting(false); return; }
@@ -534,7 +556,7 @@ export default function LeadsPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">Leads</h1>
           <p className="text-slate-500 mt-0.5 text-sm">
-            {leads.length} lead{leads.length !== 1 ? "s" : ""} · AI-powered intelligence &amp; pipeline tracking
+            {total} lead{total !== 1 ? "s" : ""} · AI-powered intelligence &amp; pipeline tracking
           </p>
         </div>
         <div className="flex gap-2">
@@ -569,7 +591,7 @@ export default function LeadsPage() {
               />
             </div>
             <span className="text-xs text-slate-400 font-medium">
-              {filteredLeads.length} result{filteredLeads.length !== 1 ? "s" : ""}
+              {total} result{total !== 1 ? "s" : ""}
             </span>
             {refreshing && (
               <span className="flex items-center gap-1 text-xs text-orange-500 font-medium">
@@ -946,9 +968,11 @@ export default function LeadsPage() {
                                               <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5 ${cls}`}>
                                                 <StrIcon className="w-3 h-3" />{card.strength}
                                               </span>
-                                              <span className={`text-xs font-bold tabular-nums ${card.points >= 0 ? "text-green-600" : "text-red-500"}`}>
-                                                {card.points >= 0 ? "+" : ""}{card.points} pts
-                                              </span>
+                                              {card.points != null && (
+                                                <span className={`text-xs font-bold tabular-nums ${card.points >= 0 ? "text-green-600" : "text-red-500"}`}>
+                                                  {card.points >= 0 ? "+" : ""}{card.points} pts
+                                                </span>
+                                              )}
                                             </div>
                                           </div>
                                           <p className="text-xs text-gray-700 leading-relaxed">{card.reason}</p>
@@ -1012,8 +1036,6 @@ export default function LeadsPage() {
                                   <div className="bg-white rounded-xl border border-gray-200 p-4">
                                     <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Metadata</p>
                                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                                      <span className="text-gray-400">Lead ID</span>
-                                      <span className="font-mono text-gray-700 text-right">#{lead.id}</span>
                                       <span className="text-gray-400">Created</span>
                                       <span className="text-gray-700 text-right">{formatDate(lead.created_at)}</span>
                                       {lead.assigned_to && <>
@@ -1038,6 +1060,8 @@ export default function LeadsPage() {
               </tbody>
             </table>
           </div>
+
+          <Pagination page={page} total={total} perPage={PER_PAGE} onChange={(p) => setPage(p)} />
 
           {filteredLeads.length === 0 && !error && (
             <div className="flex flex-col items-center justify-center py-16 text-center">

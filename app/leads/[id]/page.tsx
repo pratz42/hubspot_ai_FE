@@ -38,7 +38,7 @@ import { getErrorMessage } from "@/lib/errors";
 import { getPipelineStage } from "@/lib/pipeline";
 
 interface EvidenceCard {
-  points: number;
+  points?: number;
   reason: string;
   strength: "low" | "medium" | "high";
   source_url: string;
@@ -114,6 +114,13 @@ function avatarGradient(name: string) {
 function formatDeal(value?: number) {
   if (!value) return null;
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
+}
+
+const BREAKDOWN_RE = /(?:exact\s+)?score\s+breakdown:/i;
+function getScoreNarrative(scoreComment?: string): string | undefined {
+  if (!scoreComment) return undefined;
+  const match = BREAKDOWN_RE.exec(scoreComment);
+  return (match ? scoreComment.substring(0, match.index).trim() : scoreComment) || undefined;
 }
 
 function getScoreConfig(score?: number) {
@@ -355,7 +362,7 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                         <div className="h-2 bg-slate-100 rounded-full overflow-hidden mb-2">
                           <div className={`h-full rounded-full ${scoreConfig.bar} transition-all`} style={{ width: `${lead.ai_score}%` }} />
                         </div>
-                        {lead.score_comment && <p className="text-sm text-slate-600">{lead.score_comment}</p>}
+                        {lead.score_comment && <p className="text-sm text-slate-600">{getScoreNarrative(lead.score_comment)}</p>}
                       </div>
                     </div>
                   </div>
@@ -546,10 +553,12 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                             </span>
                             <span className="text-xs text-slate-500">{card.signal_type}</span>
                           </div>
-                          <div className="flex items-center gap-1 text-xs font-bold text-slate-700">
-                            <BarChart3 className="w-3.5 h-3.5 text-slate-400" />
-                            +{card.points} pts
-                          </div>
+                          {card.points != null && (
+                            <div className="flex items-center gap-1 text-xs font-bold text-slate-700">
+                              <BarChart3 className="w-3.5 h-3.5 text-slate-400" />
+                              {card.points >= 0 ? "+" : ""}{card.points} pts
+                            </div>
+                          )}
                         </div>
                         <p className="text-sm text-slate-900 mb-2">{card.reason}</p>
                         {card.source_excerpt && (
@@ -683,7 +692,9 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                   {lead.evidence_cards.slice(0, 3).map((c, i) => (
                     <div key={i} className="flex items-center justify-between text-xs">
                       <span className="text-slate-500 truncate flex-1">{c.signal_type}</span>
-                      <span className="text-slate-800 font-bold ml-2">+{c.points}</span>
+                      {c.points != null && (
+                        <span className="text-slate-800 font-bold ml-2">{c.points >= 0 ? "+" : ""}{c.points}</span>
+                      )}
                     </div>
                   ))}
                   {lead.evidence_cards.length > 3 && (

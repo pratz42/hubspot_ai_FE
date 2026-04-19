@@ -11,7 +11,7 @@ function ContentWrapper({ children }: { children: ReactNode }) {
   const isLoginRoute = pathname === "/";
   return (
     <main
-      className={`flex-1 min-h-screen transition-all duration-300 ${
+      className={`flex-1 min-h-screen overflow-x-hidden transition-all duration-300 ${
         isLoginRoute ? "" : collapsed ? "ml-16" : "ml-64"
       }`}
     >

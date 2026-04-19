@@ -82,3 +82,26 @@ body {
 .sidebar-scroll::-webkit-scrollbar-thumb:hover {
   background: rgb(71 85 105);
 }
+
+/* Kanban board horizontal scrollbar */
+.kanban-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(148 163 184) rgb(226 232 240);
+}
+.kanban-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+.kanban-scroll::-webkit-scrollbar-track {
+  background: rgb(226 232 240);
+  border-radius: 100px;
+}
+.kanban-scroll::-webkit-scrollbar-thumb {
+  background: rgb(100 116 139);
+  border-radius: 100px;
+}
+.kanban-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(234 88 12);
+}
+.kanban-scroll::-webkit-scrollbar-thumb:active {
+  background: rgb(194 65 12);
+}
