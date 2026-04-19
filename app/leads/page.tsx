@@ -2,7 +2,6 @@
 
 import { useEffect, useState, Fragment, useRef } from "react";
 import Link from "next/link";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -38,11 +37,18 @@ import {
   AlertCircle,
   Filter,
   Briefcase,
+  Sparkles,
 } from "lucide-react";
 import API, { extractArray } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import { getPipelineStage, PIPELINE_STAGE_ORDER } from "@/lib/pipeline";
 import { Pagination } from "@/components/pagination";
+import { LeadsAIQueryBar } from "@/components/leads/LeadsAIQueryBar";
+import { SuggestedPromptChips } from "@/components/leads/SuggestedPromptChips";
+import { QueryInterpretationBanner } from "@/components/leads/QueryInterpretationBanner";
+import { QueryLoadingState } from "@/components/leads/QueryLoadingState";
+import { QueryErrorState } from "@/components/leads/QueryErrorState";
+import type { NLQueryResponse } from "@/components/leads/nl-query-types";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -122,6 +128,8 @@ interface ImportResult {
   failed: number;
   errors: { row: number; error: string }[];
 }
+
+type NLQueryResult = NLQueryResponse<Lead & { hybrid_score?: number }>;
 
 /* ── Formatters & helpers ───────────────────────────────────────────── */
 
@@ -278,6 +286,13 @@ export default function LeadsPage() {
   const [companyIndustry, setCompanyIndustry] = useState<string>("");
   const [contactDetails, setContactDetails] = useState<{ company_name?: string; industry?: string; source?: string } | null>(null);
 
+  // AI natural-language query
+  const [aiQuery, setAiQuery] = useState("");
+  const [aiSearching, setAiSearching] = useState(false);
+  const [aiResult, setAiResult] = useState<NLQueryResult | null>(null);
+  const [aiError, setAiError] = useState("");
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+
   // CSV Import modal
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -330,6 +345,28 @@ export default function LeadsPage() {
       setLoading(false);
       if (isRefresh) setRefreshing(false);
     }
+  };
+
+  const handleAiQuery = async (q: string) => {
+    if (!q.trim()) return;
+    setAiSearching(true);
+    setAiError("");
+    // Keep previous results visible while fetching — only clear on success or new query
+    try {
+      const res = await API.get("/nl_query", { params: { query: q.trim() } });
+      setAiResult(res.data);
+    } catch (err) {
+      setAiError(getErrorMessage(err, "AI query failed. Please try again."));
+    } finally {
+      setAiSearching(false);
+    }
+  };
+
+  const clearAiResult = () => {
+    setAiResult(null);
+    setAiQuery("");
+    setAiError("");
+    setAiPanelOpen(false);
   };
 
   const fetchFilterOptions = async () => {
@@ -465,13 +502,48 @@ export default function LeadsPage() {
 
   /* ── Export CSV ── */
   const handleExport = () => {
-    const params = new URLSearchParams(buildFilterParams(filters) as Record<string, string>);
+    if (aiResult) {
+      const CSV_COLS: [string, (l: Lead & { hybrid_score?: number }) => string][] = [
+        ["Name",                  (l) => l.name],
+        ["Company",               (l) => l.company],
+        ["Email",                 (l) => l.email ?? ""],
+        ["Phone",                 (l) => l.phone ?? ""],
+        ["Industry",              (l) => l.industry ?? ""],
+        ["Source",                (l) => l.source ?? ""],
+        ["Deal Size",             (l) => l.deal_size != null ? String(Math.round(l.deal_size)) : ""],
+        ["Status",                (l) => l.status],
+        ["Tags",                  (l) => (l.tags ?? []).join(", ")],
+        ["Assigned To",           (l) => l.assigned_to ?? ""],
+        ["Comments",              (l) => l.comments ?? ""],
+        ["AI Score",              (l) => l.ai_score != null ? String(Math.round(l.ai_score)) : ""],
+        ["Recommended Offerings", (l) => (l.recommended_offerings ?? []).join(", ")],
+        ["AI Analysis",           (l) => l.score_comment ?? ""],
+        ["Sales Strategy",        (l) => l.sales_strategy ?? ""],
+      ];
+
+      const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+      const rows = [
+        CSV_COLS.map(([h]) => escape(h)).join(","),
+        ...aiResult.results.map((l) => CSV_COLS.map(([, fn]) => escape(fn(l))).join(",")),
+      ];
+      const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = "leads-ai-export.csv";
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+      return;
+    }
+
+    const exportParams = buildFilterParams(filters) as Record<string, string>;
+    if (searchTerm) exportParams.search = searchTerm;
+    const params = new URLSearchParams(exportParams);
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     const url = `http://localhost:8000/leads/export-csv?${params.toString()}`;
     const a = document.createElement("a");
     a.href = url;
     if (token) {
-      // Fetch with auth header and trigger download
       fetch(url, { headers: { Authorization: `Bearer ${token}` } })
         .then((res) => res.blob())
         .then((blob) => {
@@ -548,297 +620,401 @@ export default function LeadsPage() {
   }
 
   const activeFilterCount = countActiveFilters(filters);
+  const displayLeads = aiResult ? aiResult.results : filteredLeads;
+  const resultCount = aiResult ? aiResult.count : total;
+  const aiPanelVisible = aiPanelOpen || !!aiResult || aiSearching || !!aiError;
 
   return (
-    <div className="p-6 space-y-5">
-      {/* Page header */}
-      <div className="flex justify-between items-center">
+    <div className="px-6 py-5 space-y-4 max-w-[1600px] mx-auto">
+
+      {/* ── Page header ─────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Leads</h1>
-          <p className="text-slate-500 mt-0.5 text-sm">
-            {total} lead{total !== 1 ? "s" : ""} · AI-powered intelligence &amp; pipeline tracking
+          <h1 className="text-lg font-bold text-slate-900 tracking-tight">Leads</h1>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {resultCount} lead{resultCount !== 1 ? "s" : ""}
+            {aiResult ? " · AI results" : " · pipeline intelligence"}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" className="text-sm border-slate-200 text-slate-700 hover:bg-slate-50" onClick={openImport}>
-            <Upload className="w-4 h-4 mr-2" />
-            Import CSV
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs text-slate-500 hover:text-slate-700 hover:bg-slate-100 gap-1.5"
+            onClick={openImport}
+          >
+            <Upload className="w-3.5 h-3.5" />Import
           </Button>
-          <Button className="bg-orange-600 hover:bg-orange-700 text-sm shadow-sm shadow-orange-200" onClick={openAddDrawer}>
-            <Plus className="w-4 h-4 mr-2" />
-            Add Lead
+          <Button
+            size="sm"
+            className="h-8 text-xs bg-orange-600 hover:bg-orange-700 shadow-sm shadow-orange-200 gap-1.5"
+            onClick={openAddDrawer}
+          >
+            <Plus className="w-3.5 h-3.5" />Add Lead
           </Button>
         </div>
       </div>
 
-      <Card className="overflow-hidden border-slate-200 shadow-sm">
-        <CardContent className="p-0">
-          {error && (
-            <div className="m-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {error}
-            </div>
-          )}
+      {/* ── Main card ───────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
 
-          {/* Toolbar */}
-          <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-white">
-            <div className="relative flex-1 max-w-xs">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-              <Input
-                placeholder="Search leads…"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9 h-8 text-sm bg-slate-50 border-slate-200 focus:bg-white"
-              />
-            </div>
-            <span className="text-xs text-slate-400 font-medium">
-              {total} result{total !== 1 ? "s" : ""}
-            </span>
-            {refreshing && (
-              <span className="flex items-center gap-1 text-xs text-orange-500 font-medium">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Refreshing…
-              </span>
-            )}
-            <div className="ml-auto flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className={`text-xs h-8 border-slate-200 ${activeFilterCount > 0 ? "border-orange-300 text-orange-600 bg-orange-50" : "text-slate-600"}`}
-                onClick={openFilter}
-              >
-                <SlidersHorizontal className="w-3.5 h-3.5 mr-1.5" />
-                Filter
-                {activeFilterCount > 0 && (
-                  <span className="ml-1.5 bg-orange-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold">
-                    {activeFilterCount}
-                  </span>
-                )}
-              </Button>
-              <Button variant="outline" size="sm" className="text-xs h-8 border-slate-200 text-slate-600" onClick={handleExport}>
-                <Download className="w-3.5 h-3.5 mr-1.5" />
-                Export
-              </Button>
-            </div>
+        {/* Error */}
+        {error && (
+          <div className="mx-4 mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+            {error}
+          </div>
+        )}
+
+        {/* ── Unified control bar ─────────────────────────────────── */}
+        <div className="flex items-center gap-2 px-4 h-12 border-b border-slate-100">
+          {/* Search */}
+          <div className="relative w-64 shrink-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5 pointer-events-none" />
+            <Input
+              placeholder="Search leads…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-8 h-8 text-xs bg-slate-50 border-slate-200 focus:bg-white focus:border-slate-300 rounded-lg"
+            />
           </div>
 
-          {/* Active filter chips */}
-          {activeFilterCount > 0 && (
-            <div className="flex items-center gap-2 px-4 py-2.5 bg-orange-50/60 border-b border-orange-100 flex-wrap">
-              <Filter className="w-3.5 h-3.5 text-orange-500 shrink-0" />
-              {filters.status && (
-                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2.5 py-0.5 rounded-full font-semibold">
-                  Status: {filters.status}
-                </span>
-              )}
-              {filters.industry && (
-                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2.5 py-0.5 rounded-full font-semibold">
-                  Industry: {filters.industry}
-                </span>
-              )}
-              {filters.source && (
-                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2.5 py-0.5 rounded-full font-semibold">
-                  Source: {filters.source}
-                </span>
-              )}
-              {(filters.min_deal || filters.max_deal) && (
-                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2.5 py-0.5 rounded-full font-semibold">
-                  Deal: {filters.min_deal ? `$${filters.min_deal}` : "any"} – {filters.max_deal ? `$${filters.max_deal}` : "any"}
-                </span>
-              )}
-              {(filters.min_score || filters.max_score) && (
-                <span className="text-xs bg-white border border-orange-200 text-orange-700 px-2.5 py-0.5 rounded-full font-semibold">
-                  Score: {filters.min_score || "0"} – {filters.max_score || "100"}
-                </span>
-              )}
-              <button
-                onClick={clearFilters}
-                className="ml-auto text-xs text-orange-600 hover:text-orange-800 font-semibold"
-              >
-                Clear all ×
-              </button>
-            </div>
-          )}
+          <div className="w-px h-5 bg-slate-100 mx-0.5" />
 
-          {/* Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1180px] text-sm border-collapse">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200">
-                  {["Lead", "Contact", "Industry / Source", "Deal Size", "AI Score", "Offerings", "AI Insight", "Actions"].map((h) => (
-                    <th
-                      key={h}
-                      className="text-left py-3 px-4 font-semibold text-slate-500 text-xs uppercase tracking-wider whitespace-nowrap"
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
+          {/* Filter */}
+          <button
+            onClick={openFilter}
+            className={`flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium transition-all ${
+              activeFilterCount > 0
+                ? "bg-orange-50 text-orange-600 border border-orange-200"
+                : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+            }`}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            Filter
+            {activeFilterCount > 0 && (
+              <span className="bg-orange-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
 
-              <tbody>
-                {filteredLeads.map((lead) => (
-                  <Fragment key={lead.id}>
-                    {/* Main row */}
-                    <tr
-                      onClick={() => toggleExpand(lead.id)}
-                      className={`border-b border-slate-100 transition-colors cursor-pointer ${
-                        expandedId === lead.id ? "bg-orange-50/30" : "hover:bg-slate-50"
-                      }`}
-                    >
-                      {/* Lead */}
-                      <td className="py-3.5 px-4 align-top min-w-[190px]">
-                        <div className="font-semibold text-slate-900 leading-tight">{lead.name}</div>
-                        <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1">
-                          <Building2 className="w-3 h-3 flex-shrink-0" />
-                          {lead.company_id_assoc ? (
-                            <Link href={`/companies/${lead.company_id_assoc}`} className="hover:text-orange-600 transition-colors" onClick={(e) => e.stopPropagation()}>{lead.company}</Link>
-                          ) : lead.contact_id ? (
-                            <Link href={`/contacts/${lead.contact_id}`} className="hover:text-orange-600 transition-colors" onClick={(e) => e.stopPropagation()}>{lead.company}</Link>
-                          ) : lead.company}
-                        </div>
-                        <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${getStatusStyle(lead.status)}`}>
-                            {getPipelineStage(lead.status).label}
-                          </span>
-                          <span className="text-[11px] text-slate-400 flex items-center gap-0.5">
-                            <Calendar className="w-3 h-3" />
-                            {formatDate(lead.created_at)}
-                          </span>
-                        </div>
+          {/* Export */}
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-all"
+          >
+            <Download className="w-3.5 h-3.5" />Export
+          </button>
+
+          {/* Right side */}
+          <div className="ml-auto flex items-center gap-3">
+            {/* Result count */}
+            <span className="text-xs text-slate-400 tabular-nums">
+              {aiResult ? (
+                <span className="text-violet-600 font-medium">{aiResult.results.length} of {aiResult.count}</span>
+              ) : (
+                <>{total} result{total !== 1 ? "s" : ""}</>
+              )}
+            </span>
+
+            {refreshing && (
+              <Loader2 className="w-3.5 h-3.5 text-orange-400 animate-spin" />
+            )}
+
+            <div className="w-px h-5 bg-slate-100" />
+
+            {/* Ask AI toggle */}
+            <button
+              onClick={() => setAiPanelOpen((p) => !p)}
+              className={`relative flex items-center gap-1.5 h-8 px-3.5 rounded-lg text-xs font-semibold overflow-hidden select-none transition-all duration-200
+                ${aiPanelVisible
+                  ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white border border-orange-400 shadow-sm shadow-orange-200/70 scale-[1.00]"
+                  : "ai-ask-idle bg-gradient-to-r from-amber-50 to-orange-50 text-orange-600 border border-orange-200 hover:from-orange-100 hover:to-amber-100 hover:border-orange-300 hover:shadow-md hover:shadow-orange-100/70 hover:scale-[1.02] active:scale-[0.98]"
+                }`}
+            >
+              <Sparkles className={`w-3.5 h-3.5 shrink-0 ${!aiPanelVisible ? "ai-icon-breathe" : ""}`} />
+              <span>Ask AI</span>
+              {aiResult && (
+                <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${aiPanelVisible ? "bg-white/80" : "bg-orange-400"}`} />
+              )}
+              {!aiPanelVisible && (
+                <span
+                  className="ai-shimmer-strip absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-white/55 to-transparent pointer-events-none"
+                  aria-hidden="true"
+                />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* ── Active manual filter chips ───────────────────────────── */}
+        {activeFilterCount > 0 && (
+          <div className="flex items-center gap-1.5 px-4 py-2 border-b border-slate-100 bg-slate-50/60 overflow-x-auto">
+            <Filter className="w-3 h-3 text-orange-400 shrink-0" />
+            {filters.status && (
+              <span className="text-[11px] bg-white border border-orange-200 text-orange-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
+                Status: {filters.status}
+              </span>
+            )}
+            {filters.industry && (
+              <span className="text-[11px] bg-white border border-orange-200 text-orange-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
+                Industry: {filters.industry}
+              </span>
+            )}
+            {filters.source && (
+              <span className="text-[11px] bg-white border border-orange-200 text-orange-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
+                Source: {filters.source}
+              </span>
+            )}
+            {(filters.min_deal || filters.max_deal) && (
+              <span className="text-[11px] bg-white border border-orange-200 text-orange-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
+                Deal: {filters.min_deal ? `$${filters.min_deal}` : "any"} – {filters.max_deal ? `$${filters.max_deal}` : "any"}
+              </span>
+            )}
+            {(filters.min_score || filters.max_score) && (
+              <span className="text-[11px] bg-white border border-orange-200 text-orange-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
+                Score: {filters.min_score || "0"} – {filters.max_score || "100"}
+              </span>
+            )}
+            <button
+              onClick={clearFilters}
+              className="ml-auto shrink-0 text-[11px] text-orange-500 hover:text-orange-700 font-semibold whitespace-nowrap"
+            >
+              Clear ×
+            </button>
+          </div>
+        )}
+
+        {/* ── Collapsible AI panel ─────────────────────────────────── */}
+        {aiPanelVisible && (
+          <div className="px-4 pt-3 pb-3 border-b border-orange-100/60 bg-gradient-to-b from-orange-50/40 to-transparent space-y-2.5 border-l-2 border-l-orange-200/70">
+            <LeadsAIQueryBar
+              value={aiQuery}
+              onChange={setAiQuery}
+              onSubmit={(q) => { setAiPanelOpen(true); handleAiQuery(q); }}
+              loading={aiSearching}
+              onClear={clearAiResult}
+              hasResult={!!aiResult}
+            />
+            {!aiSearching && (
+              <SuggestedPromptChips
+                onSelect={(prompt) => { setAiQuery(prompt); setAiPanelOpen(true); handleAiQuery(prompt); }}
+                disabled={aiSearching}
+                maxVisible={4}
+              />
+            )}
+          </div>
+        )}
+
+        {/* AI interpretation banner */}
+        {aiResult && (
+          <QueryInterpretationBanner
+            result={aiResult}
+            query={aiQuery}
+            onClear={clearAiResult}
+          />
+        )}
+
+        {/* AI error */}
+        {aiError && !aiSearching && (
+          <QueryErrorState
+            error={aiError}
+            onRetry={() => aiQuery.trim() && handleAiQuery(aiQuery)}
+            onDismiss={() => setAiError("")}
+          />
+        )}
+
+        {/* AI loading */}
+        {aiSearching && <QueryLoadingState />}
+
+        {/* ── Table ───────────────────────────────────────────────── */}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[960px] text-sm border-collapse">
+            <thead>
+              <tr className="border-b border-slate-100">
+                {[
+                  ["Lead", "min-w-[200px]"],
+                  ["Contact", "min-w-[150px]"],
+                  ["Industry · Source", "min-w-[130px]"],
+                  ["Value", "min-w-[90px]"],
+                  ["AI Score", "min-w-[110px]"],
+                  ["Offerings", "min-w-[170px]"],
+                  ["Insight", "min-w-[180px] max-w-[220px]"],
+                  ["", "w-[110px]"],
+                ].map(([h, cls]) => (
+                  <th
+                    key={h}
+                    className={`text-left py-2.5 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-widest whitespace-nowrap ${cls}`}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+
+            <tbody>
+              {displayLeads.map((lead) => (
+                <Fragment key={lead.id}>
+                  {/* ── Main row ── */}
+                  <tr
+                    onClick={() => toggleExpand(lead.id)}
+                    className={`border-b border-slate-50 transition-colors cursor-pointer group ${
+                      expandedId === lead.id
+                        ? "bg-orange-50/20"
+                        : "hover:bg-slate-50/60"
+                    }`}
+                  >
+                    {/* Lead */}
+                    <td className="py-3 px-4 align-middle min-w-[200px]">
+                      <div className="font-semibold text-slate-800 text-[13px] leading-snug">{lead.name}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1">
+                        <Building2 className="w-3 h-3 shrink-0" />
+                        {lead.company_id_assoc ? (
+                          <Link href={`/companies/${lead.company_id_assoc}`} className="hover:text-orange-600 transition-colors truncate max-w-[140px]" onClick={(e) => e.stopPropagation()}>{lead.company}</Link>
+                        ) : lead.contact_id ? (
+                          <Link href={`/contacts/${lead.contact_id}`} className="hover:text-orange-600 transition-colors truncate max-w-[140px]" onClick={(e) => e.stopPropagation()}>{lead.company}</Link>
+                        ) : <span className="truncate max-w-[140px]">{lead.company}</span>}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-1.5">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold capitalize ${getStatusStyle(lead.status)}`}>
+                          {getPipelineStage(lead.status).label}
+                        </span>
                         {lead.tags && lead.tags.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1.5">
-                            {lead.tags.slice(0, 2).map((tag, i) => (
-                              <span key={i} className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md font-medium">
-                                {tag}
-                              </span>
-                            ))}
+                          <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-medium">
+                            {lead.tags[0]}{lead.tags.length > 1 ? ` +${lead.tags.length - 1}` : ""}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+
+                    {/* Contact */}
+                    <td className="py-3 px-4 align-middle min-w-[150px]">
+                      <div className="space-y-1 text-[11px] text-slate-500">
+                        {lead.email && (
+                          <div className="flex items-center gap-1.5">
+                            <Mail className="w-3 h-3 text-slate-300 shrink-0" />
+                            <span className="truncate max-w-[120px]">{lead.email}</span>
                           </div>
                         )}
-                      </td>
-
-                      {/* Contact */}
-                      <td className="py-3.5 px-4 align-top min-w-[165px]">
-                        <div className="space-y-1.5 text-xs text-slate-600">
-                          {lead.email && (
-                            <div className="flex items-center gap-1.5">
-                              <Mail className="w-3 h-3 text-slate-400 flex-shrink-0" />
-                              <span className="truncate max-w-[135px]">{lead.email}</span>
-                            </div>
-                          )}
-                          {lead.phone && (
-                            <div className="flex items-center gap-1.5">
-                              <Phone className="w-3 h-3 text-slate-400 flex-shrink-0" />
-                              {lead.phone}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Industry / Source */}
-                      <td className="py-3.5 px-4 align-top min-w-[140px]">
-                        <div className="space-y-1.5">
-                          <span className="text-xs text-slate-700 capitalize font-medium">{lead.industry || "—"}</span>
-                          {lead.source && (
-                            <div>
-                              <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${getSourceStyle(lead.source)}`}>
-                                {lead.source}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Deal Size */}
-                      <td className="py-3.5 px-4 align-top min-w-[100px]">
-                        <span className="font-bold text-slate-800 text-sm tabular-nums">{formatDealSize(lead.deal_size)}</span>
-                      </td>
-
-                      {/* AI Score */}
-                      <td className="py-3.5 px-4 align-top min-w-[130px]">
-                        {lead.ai_score != null ? (
-                          <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border font-bold text-sm ${getScoreBorder(lead.ai_score)} ${getScoreColor(lead.ai_score)}`}>
-                            <Star className="w-3.5 h-3.5" />
-                            {lead.ai_score.toFixed(0)}
+                        {lead.phone && (
+                          <div className="flex items-center gap-1.5">
+                            <Phone className="w-3 h-3 text-slate-300 shrink-0" />
+                            <span>{lead.phone}</span>
                           </div>
-                        ) : (
-                          <span className="text-slate-300 text-sm font-medium">—</span>
+                        )}
+                        {!lead.email && !lead.phone && <span className="text-slate-300">—</span>}
+                      </div>
+                    </td>
+
+                    {/* Industry · Source */}
+                    <td className="py-3 px-4 align-middle min-w-[130px]">
+                      <div className="text-[12px] text-slate-700 font-medium capitalize leading-snug">
+                        {lead.industry || <span className="text-slate-300">—</span>}
+                      </div>
+                      {lead.source && (
+                        <span className={`mt-1 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold capitalize ${getSourceStyle(lead.source)}`}>
+                          {lead.source}
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Value */}
+                    <td className="py-3 px-4 align-middle min-w-[90px]">
+                      <span className="text-[13px] font-bold text-slate-800 tabular-nums">{formatDealSize(lead.deal_size)}</span>
+                    </td>
+
+                    {/* AI Score */}
+                    <td className="py-3 px-4 align-middle min-w-[110px]">
+                      {lead.ai_score != null ? (
+                        <div className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-bold ${getScoreBorder(lead.ai_score)} ${getScoreColor(lead.ai_score)}`}>
+                          <Star className="w-3 h-3" />
+                          {lead.ai_score.toFixed(0)}
+                        </div>
+                      ) : (
+                        <span className="text-slate-200 text-sm">—</span>
+                      )}
+                      <div className="flex flex-col gap-0.5 mt-1">
+                        {aiResult?.result_mode === "semantic" && (lead as Lead & { hybrid_score?: number }).hybrid_score != null && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-violet-50 text-violet-600 border border-violet-100 flex items-center gap-0.5 w-fit">
+                            <Sparkles className="w-2.5 h-2.5" />
+                            {((lead as Lead & { hybrid_score?: number }).hybrid_score! * 100).toFixed(0)}%
+                          </span>
                         )}
                         {lead.used_web_evidence && (
-                          <div className="mt-1.5">
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-teal-50 text-teal-700">
-                              Web
+                          <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-teal-50 text-teal-600 border border-teal-100 w-fit">Web</span>
+                        )}
+                      </div>
+                    </td>
+
+                    {/* Offerings */}
+                    <td className="py-3 px-4 align-middle min-w-[170px]">
+                      {lead.recommended_offerings && lead.recommended_offerings.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {lead.recommended_offerings.slice(0, 2).map((o, idx) => (
+                            <span key={idx} className={`inline-flex px-2 py-0.5 rounded text-[10px] font-semibold ${getOfferingColor(idx)}`}>
+                              {o}
                             </span>
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Offerings */}
-                      <td className="py-3.5 px-4 align-top min-w-[200px]">
-                        {lead.recommended_offerings && lead.recommended_offerings.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {lead.recommended_offerings.slice(0, 2).map((o, idx) => (
-                              <span key={idx} className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getOfferingColor(idx)}`}>
-                                {o}
-                              </span>
-                            ))}
-                            {lead.recommended_offerings.length > 2 && (
-                              <span
-                                className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500 cursor-help"
-                                title={lead.recommended_offerings.slice(2).join(", ")}
-                              >
-                                +{lead.recommended_offerings.length - 2}
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-slate-300 text-xs">—</span>
-                        )}
-                      </td>
-
-                      {/* AI Insight */}
-                      <td className="py-3.5 px-4 align-top min-w-[210px] max-w-[240px]">
-                        {lead.ai_reason && (
-                          <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">{lead.ai_reason}</p>
-                        )}
-                        <button
-                          className="mt-1.5 text-[11px] text-orange-600 hover:text-orange-700 font-semibold flex items-center gap-0.5"
-                          onClick={(e) => { e.stopPropagation(); toggleExpand(lead.id); }}
-                        >
-                          {expandedId === lead.id ? <>Collapse <ChevronUp className="w-3 h-3" /></> : <>Full details <ChevronDown className="w-3 h-3" /></>}
-                        </button>
-                      </td>
-
-                      {/* Actions */}
-                      <td className="py-3.5 px-4 align-top">
-                        <div className="flex items-center gap-1 flex-wrap">
-                          <Link href={`/leads/${lead.id}`} onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-slate-600 hover:text-orange-600 hover:bg-orange-50">
-                              <Eye className="w-3.5 h-3.5 mr-1" />View
-                            </Button>
-                          </Link>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleConvertToDeal(lead.id); }}
-                            className="h-7 px-2 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors flex items-center gap-1"
-                            title="Convert to Deal"
-                          >
-                            <Briefcase className="w-3 h-3" />Deal
-                          </button>
-                          <button
-                            onClick={(e) => openEditDrawer(lead, e)}
-                            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-orange-600 transition-colors"
-                            title="Edit lead"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); toggleExpand(lead.id); }}
-                            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
-                          >
-                            {expandedId === lead.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                          </button>
+                          ))}
+                          {lead.recommended_offerings.length > 2 && (
+                            <span
+                              className="inline-flex px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-400 cursor-help"
+                              title={lead.recommended_offerings.slice(2).join(", ")}
+                            >
+                              +{lead.recommended_offerings.length - 2}
+                            </span>
+                          )}
                         </div>
-                      </td>
-                    </tr>
+                      ) : (
+                        <span className="text-slate-200 text-xs">—</span>
+                      )}
+                    </td>
+
+                    {/* Insight */}
+                    <td className="py-3 px-4 align-middle min-w-[180px] max-w-[220px]">
+                      {lead.ai_reason && (
+                        <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{lead.ai_reason}</p>
+                      )}
+                      <button
+                        className="mt-1 text-[10px] text-orange-500 hover:text-orange-700 font-semibold flex items-center gap-0.5 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); toggleExpand(lead.id); }}
+                      >
+                        {expandedId === lead.id
+                          ? <><ChevronUp className="w-3 h-3" />Collapse</>
+                          : <><ChevronDown className="w-3 h-3" />Details</>}
+                      </button>
+                    </td>
+
+                    {/* Actions */}
+                    <td className="py-3 px-4 align-middle w-[110px]">
+                      <div className="flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                        <Link href={`/leads/${lead.id}`} onClick={(e) => e.stopPropagation()}>
+                          <button className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-orange-600 transition-colors" title="View">
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        </Link>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleConvertToDeal(lead.id); }}
+                          className="p-1.5 rounded-lg hover:bg-emerald-50 text-slate-500 hover:text-emerald-600 transition-colors"
+                          title="Convert to Deal"
+                        >
+                          <Briefcase className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={(e) => openEditDrawer(lead, e)}
+                          className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-orange-600 transition-colors"
+                          title="Edit"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggleExpand(lead.id); }}
+                          className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                        >
+                          {expandedId === lead.id ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
 
                     {/* Expanded detail panel */}
                     {expandedId === lead.id && (() => {
@@ -1061,28 +1237,44 @@ export default function LeadsPage() {
             </table>
           </div>
 
-          <Pagination page={page} total={total} perPage={PER_PAGE} onChange={(p) => setPage(p)} />
+          {!aiResult && (
+            <Pagination page={page} total={total} perPage={PER_PAGE} onChange={(p) => setPage(p)} />
+          )}
 
-          {filteredLeads.length === 0 && !error && (
+          {displayLeads.length === 0 && !error && !aiSearching && !aiError && (
             <div className="flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mb-4">
-                <Users className="w-6 h-6 text-slate-400" />
-              </div>
-              <h3 className="text-sm font-semibold text-slate-700 mb-1">No leads found</h3>
-              <p className="text-slate-400 text-xs max-w-xs">
-                {searchTerm || activeFilterCount > 0
-                  ? "Try adjusting your search or active filters."
-                  : "Get started by adding your first lead or importing a CSV."}
-              </p>
-              {!searchTerm && activeFilterCount === 0 && (
-                <button onClick={openAddDrawer} className="mt-4 text-xs font-semibold text-orange-600 hover:text-orange-700">
-                  + Add your first lead
-                </button>
+              {aiResult ? (
+                <>
+                  <div className="w-14 h-14 rounded-2xl bg-violet-50 border border-violet-200 flex items-center justify-center mb-4">
+                    <Sparkles className="w-6 h-6 text-violet-400" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-slate-700 mb-1">No matches found</h3>
+                  <p className="text-slate-400 text-xs max-w-xs">Try rephrasing your query or broadening the criteria.</p>
+                  <button onClick={clearAiResult} className="mt-4 text-xs font-semibold text-violet-600 hover:text-violet-700">
+                    ← Back to all leads
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="w-14 h-14 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mb-4">
+                    <Users className="w-6 h-6 text-slate-400" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-slate-700 mb-1">No leads found</h3>
+                  <p className="text-slate-400 text-xs max-w-xs">
+                    {searchTerm || activeFilterCount > 0
+                      ? "Try adjusting your search or active filters."
+                      : "Get started by adding your first lead or importing a CSV."}
+                  </p>
+                  {!searchTerm && activeFilterCount === 0 && (
+                    <button onClick={openAddDrawer} className="mt-4 text-xs font-semibold text-orange-600 hover:text-orange-700">
+                      + Add your first lead
+                    </button>
+                  )}
+                </>
               )}
             </div>
           )}
-        </CardContent>
-      </Card>
+      </div>
 
       {/* ── Add / Edit Lead Drawer ── */}
       {drawerOpen && (
@@ -1268,7 +1460,7 @@ export default function LeadsPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
-                        Deal Size (₹){form.status !== "new" && <span className="text-red-500 ml-0.5">*</span>}
+                        Deal Size ($){form.status !== "new" && <span className="text-red-500 ml-0.5">*</span>}
                       </label>
                       <Input type="number" min={0} placeholder="500000" value={form.deal_size} onChange={(e) => setField("deal_size", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
                     </div>
@@ -1301,7 +1493,7 @@ export default function LeadsPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Deal Size (₹)</label>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Deal Size ($)</label>
                       <Input type="number" min={0} value={form.deal_size} onChange={(e) => setField("deal_size", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
                     </div>
                     <div>
