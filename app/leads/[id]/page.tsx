@@ -244,7 +244,11 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
               </div>
               <p className="text-sm text-slate-500 flex items-center gap-1.5">
                 <Building2 className="w-3.5 h-3.5" />
-                {lead.company}
+                {lead.company_id_assoc ? (
+                  <Link href={`/companies/${lead.company_id_assoc}`} className="hover:text-orange-600 transition-colors">{lead.company}</Link>
+                ) : lead.contact_id ? (
+                  <Link href={`/contacts/${lead.contact_id}`} className="hover:text-orange-600 transition-colors">{lead.company}</Link>
+                ) : lead.company}
                 {lead.industry && (
                   <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 ml-1">
                     {lead.industry}

@@ -47,12 +47,7 @@ import { getPipelineStage, PIPELINE_STAGE_ORDER } from "@/lib/pipeline";
 
 const BLANK_FORM = {
   name: "",
-  company: "",
-  email: "",
-  phone: "",
-  industry: "",
   deal_size: "",
-  source: "",
   status: "new",
   comments: "",
   tags: "",
@@ -88,6 +83,8 @@ interface Lead {
   recommended_offerings?: string[];
   tags?: string[];
   assigned_to?: string;
+  contact_id?: number;
+  company_id_assoc?: number;
   status: string;
   created_at: string;
 }
@@ -383,12 +380,7 @@ export default function LeadsPage() {
     setEditingLead(lead);
     setForm({
       name: lead.name ?? "",
-      company: lead.company ?? "",
-      email: lead.email ?? "",
-      phone: lead.phone ?? "",
-      industry: lead.industry ?? "",
       deal_size: lead.deal_size != null ? String(lead.deal_size) : "",
-      source: lead.source ?? "",
       status: lead.status ?? "",
       comments: lead.comments ?? "",
       tags: (lead.tags ?? []).join(", "),
@@ -415,12 +407,7 @@ export default function LeadsPage() {
       if (editingLead) {
         await API.patch(`/leads/${editingLead.id}`, {
           name: form.name.trim() || undefined,
-          company: form.company.trim() || undefined,
-          email: form.email.trim() || undefined,
-          phone: form.phone.trim() || undefined,
-          industry: form.industry.trim() || undefined,
           deal_size: form.deal_size ? parseFloat(form.deal_size) : undefined,
-          source: form.source.trim() || undefined,
           status: form.status || undefined,
           comments: form.comments.trim() || undefined,
           tags,
@@ -429,7 +416,9 @@ export default function LeadsPage() {
         if (!selectedAssoc) { setFormError("Select a Contact or Company first."); setSubmitting(false); return; }
         if (form.status !== "new" && !form.deal_size) { setFormError("Deal Size is required for this stage."); setSubmitting(false); return; }
 
+        if (!form.name.trim()) { setFormError("Lead name is required."); setSubmitting(false); return; }
         const payload: Record<string, unknown> = {
+          name: form.name.trim(),
           status: form.status || "new",
           comments: form.comments.trim() || undefined,
           tags,
@@ -437,11 +426,8 @@ export default function LeadsPage() {
         if (form.deal_size) payload.deal_size = parseFloat(form.deal_size);
         if (assocType === "contact") {
           payload.contact_id = selectedAssoc.id;
-          if (contactDetails?.industry) payload.industry = contactDetails.industry;
-          if (contactDetails?.source) payload.source = contactDetails.source;
         } else {
           payload.company_id_assoc = selectedAssoc.id;
-          if (companyIndustry) payload.industry = companyIndustry;
         }
         await API.post("/leads", payload);
       }
@@ -681,7 +667,12 @@ export default function LeadsPage() {
                       <td className="py-3.5 px-4 align-top min-w-[190px]">
                         <div className="font-semibold text-slate-900 leading-tight">{lead.name}</div>
                         <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1">
-                          <Building2 className="w-3 h-3 flex-shrink-0" />{lead.company}
+                          <Building2 className="w-3 h-3 flex-shrink-0" />
+                          {lead.company_id_assoc ? (
+                            <Link href={`/companies/${lead.company_id_assoc}`} className="hover:text-orange-600 transition-colors" onClick={(e) => e.stopPropagation()}>{lead.company}</Link>
+                          ) : lead.contact_id ? (
+                            <Link href={`/contacts/${lead.contact_id}`} className="hover:text-orange-600 transition-colors" onClick={(e) => e.stopPropagation()}>{lead.company}</Link>
+                          ) : lead.company}
                         </div>
                         <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                           <span className={`px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${getStatusStyle(lead.status)}`}>
@@ -1112,7 +1103,7 @@ export default function LeadsPage() {
                         <button
                           key={t}
                           type="button"
-                          onClick={() => { setAssocType(t); setAssocSearch(""); setAssocResults([]); setSelectedAssoc(null); setCompanyIndustry(""); setContactDetails(null); setField("industry", ""); }}
+                          onClick={() => { setAssocType(t); setAssocSearch(""); setAssocResults([]); setSelectedAssoc(null); setCompanyIndustry(""); setContactDetails(null); }}
                           className={`flex-1 py-2 text-xs font-semibold capitalize transition-colors ${assocType === t ? "bg-orange-600 text-white" : "text-slate-500 hover:bg-slate-50"}`}
                         >
                           {t}
@@ -1172,9 +1163,7 @@ export default function LeadsPage() {
                               onClick={async () => {
                                 setSelectedAssoc({ id: r.id, label: r.label, type: assocType });
                                 if (assocType === "company") {
-                                  const ind = r.sub || "";
-                                  setCompanyIndustry(ind);
-                                  setField("industry", ind);
+                                  setCompanyIndustry(r.sub || "");
                                 } else {
                                   let companyName: string | undefined;
                                   if (r.company_id) {
@@ -1204,7 +1193,7 @@ export default function LeadsPage() {
                         <p className="text-sm font-semibold text-slate-800">{selectedAssoc.label}</p>
                         <p className="text-xs text-orange-600 capitalize">{selectedAssoc.type} selected</p>
                       </div>
-                      <button type="button" onClick={() => { setSelectedAssoc(null); setCompanyIndustry(""); setContactDetails(null); setField("industry", ""); }} className="text-slate-400 hover:text-slate-600 transition-colors">
+                      <button type="button" onClick={() => { setSelectedAssoc(null); setCompanyIndustry(""); setContactDetails(null); }} className="text-slate-400 hover:text-slate-600 transition-colors">
                         <X className="w-4 h-4" />
                       </button>
                     </div>
@@ -1270,37 +1259,21 @@ export default function LeadsPage() {
                   </div>
                 </>
               ) : (
-                /* Edit mode – keep original fields */
+                /* Edit mode */
                 <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Name</label>
-                      <Input value={form.name} onChange={(e) => setField("name", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
+                  {/* Read-only info derived from FK — not editable here */}
+                  {editingLead && (editingLead.company || editingLead.email || editingLead.industry) && (
+                    <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 space-y-1.5 text-xs text-slate-600">
+                      {editingLead.company && <div><span className="font-semibold text-slate-400 uppercase tracking-wide">Company: </span>{editingLead.company}</div>}
+                      {editingLead.email && <div><span className="font-semibold text-slate-400 uppercase tracking-wide">Email: </span>{editingLead.email}</div>}
+                      {editingLead.industry && <div><span className="font-semibold text-slate-400 uppercase tracking-wide">Industry: </span>{editingLead.industry}</div>}
+                      {editingLead.source && <div><span className="font-semibold text-slate-400 uppercase tracking-wide">Source: </span>{editingLead.source}</div>}
+                      <p className="text-[10px] text-slate-400 pt-1">To change company/contact details, update the Contact or Company record directly.</p>
                     </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Company</label>
-                      <Input value={form.company} onChange={(e) => setField("company", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Email</label>
-                      <Input type="email" value={form.email} onChange={(e) => setField("email", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Phone</label>
-                      <Input value={form.phone} onChange={(e) => setField("phone", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Industry</label>
-                      <Input value={form.industry} onChange={(e) => setField("industry", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Source</label>
-                      <Input value={form.source} onChange={(e) => setField("source", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
-                    </div>
+                  )}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Lead Name</label>
+                    <Input value={form.name} onChange={(e) => setField("name", e.target.value)} className="h-9 text-sm bg-white border-slate-200" />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
