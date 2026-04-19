@@ -835,11 +835,11 @@ export default function LeadsPage() {
                 {[
                   ["Lead", "min-w-[200px]"],
                   ["Contact", "min-w-[150px]"],
-                  ["Industry · Source", "min-w-[130px]"],
+                  ["Industry", "min-w-[130px]"],
                   ["Value", "min-w-[90px]"],
                   ["AI Score", "min-w-[110px]"],
-                  ["Offerings", "min-w-[170px]"],
-                  ["Insight", "min-w-[180px] max-w-[220px]"],
+                  ["AI Suggestions", "min-w-[170px]"],
+                  ["AI Insight", "min-w-[180px] max-w-[220px]"],
                   ["", "w-[110px]"],
                 ].map(([h, cls]) => (
                   <th
