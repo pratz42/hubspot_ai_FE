@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import API from "@/lib/api";
+import { Pagination } from "@/components/pagination";
 
 interface Contact {
   id: number;
@@ -105,8 +106,12 @@ const BLANK = {
   lifecycle_stage: "lead",
 };
 
+const PER_PAGE = 25;
+
 export default function ContactsPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -131,11 +136,13 @@ export default function ContactsPage() {
   const [formOwner, setFormOwner] = useState("");
   const [users, setUsers] = useState<AppUser[]>([]);
 
-  async function fetchContacts() {
+  async function fetchContacts(p = page) {
+    setLoading(true);
     try {
-      const res = await API.get("/contacts", { params: { limit: 500 } });
+      const res = await API.get("/contacts", { params: { page: p, per_page: PER_PAGE, search: search || undefined } });
       const data: Contact[] = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
       setContacts(data);
+      setTotal(res.data?.total ?? data.length);
     } catch {
       setContacts([]);
     } finally {
@@ -161,16 +168,22 @@ export default function ContactsPage() {
     } catch { /* ignore */ }
   }
 
+  useEffect(() => { fetchContacts(1); fetchCompanies(); fetchUsers(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch when search changes (debounced) or page changes
   useEffect(() => {
-    fetchContacts();
-    fetchCompanies();
-    fetchUsers();
-  }, []);
+    const t = setTimeout(() => { setPage(1); fetchContacts(1); }, 350);
+    return () => clearTimeout(t);
+  }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { fetchContacts(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtered = useMemo(() => {
+    // Server already filters by search — just return all contacts from current page
     const q = search.toLowerCase();
     return contacts.filter(
       (c) =>
+        !q ||
         c.first_name.toLowerCase().includes(q) ||
         c.last_name?.toLowerCase().includes(q) ||
         c.email.toLowerCase().includes(q) ||
@@ -433,6 +446,8 @@ export default function ContactsPage() {
           </table>
         </div>
       )}
+
+      <Pagination page={page} total={total} perPage={PER_PAGE} onChange={(p) => setPage(p)} />
 
       {/* Add Contact Drawer */}
       {drawerOpen && (

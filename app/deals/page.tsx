@@ -4,11 +4,13 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import {
   DndContext,
   DragOverlay,
+  MeasuringStrategy,
   PointerSensor,
   useDroppable,
   useSensor,
   useSensors,
-  closestCorners,
+  rectIntersection,
+  type CollisionDetection,
   type DragStartEvent,
   type DragEndEvent,
 } from "@dnd-kit/core";
@@ -31,6 +33,8 @@ import {
   X,
   Loader2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -118,8 +122,19 @@ function DealCard({ deal, overlay = false }: { deal: Deal; overlay?: boolean }) 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.35 : 1,
   };
+
+  // When actively dragging, show a dashed placeholder in the source column
+  // instead of a semi-transparent ghost — the DragOverlay is the only full card.
+  if (isDragging) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={{ ...style, height: "120px", opacity: 0.4 }}
+        className="rounded-xl border-2 border-dashed border-slate-200 bg-slate-50"
+      />
+    );
+  }
 
   return (
     <div
@@ -127,7 +142,7 @@ function DealCard({ deal, overlay = false }: { deal: Deal; overlay?: boolean }) 
       style={style}
       className={`group bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all duration-150 overflow-hidden ${
         overlay ? "rotate-2 shadow-lg scale-105" : ""
-      } ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+      } cursor-grab`}
     >
       <div className={`h-0.5 bg-gradient-to-r ${grad}`} />
       <div className="p-3">
@@ -188,14 +203,28 @@ function DealCard({ deal, overlay = false }: { deal: Deal; overlay?: boolean }) 
   );
 }
 
+const COLUMN_PAGE_SIZE = 10;
+
 // ── Kanban Column ────────────────────────────────────────────────────────────
 
-function KanbanColumn({ stage, deals }: { stage: PipelineStage; deals: Deal[] }) {
-  const { setNodeRef, isOver } = useDroppable({ id: stage.id });
+function KanbanColumn({
+  stage,
+  deals,
+  limit,
+  onShowMore,
+}: {
+  stage: PipelineStage;
+  deals: Deal[];
+  limit: number;
+  onShowMore: () => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `stage-${stage.id}` });
   const stageColor = STAGE_COLORS[stage.name] ?? "text-slate-600";
   const stageBg = STAGE_BG[stage.name] ?? "bg-slate-50";
   const totalValue = deals.reduce((s, d) => s + (d.amount ?? 0), 0);
   const isClosed = stage.is_closed_won || stage.is_closed_lost;
+  const visibleDeals = deals.slice(0, limit);
+  const hiddenCount = deals.length - visibleDeals.length;
 
   return (
     <div
@@ -224,16 +253,24 @@ function KanbanColumn({ stage, deals }: { stage: PipelineStage; deals: Deal[] })
       </div>
 
       <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[120px] max-h-[calc(100vh-240px)]">
-        <SortableContext items={deals.map((d) => d.id)} strategy={verticalListSortingStrategy}>
-          {deals.length === 0 ? (
+        <SortableContext items={visibleDeals.map((d) => d.id)} strategy={verticalListSortingStrategy}>
+          {visibleDeals.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <AlertCircle className="w-5 h-5 text-slate-300 mb-1" />
               <p className="text-xs text-slate-400">No deals</p>
             </div>
           ) : (
-            deals.map((deal) => <DealCard key={deal.id} deal={deal} />)
+            visibleDeals.map((deal) => <DealCard key={deal.id} deal={deal} />)
           )}
         </SortableContext>
+        {hiddenCount > 0 && (
+          <button
+            onClick={onShowMore}
+            className="w-full py-2 text-xs font-semibold text-orange-600 hover:text-orange-700 hover:bg-orange-50 rounded-lg border border-dashed border-orange-200 transition-colors"
+          >
+            Show {Math.min(COLUMN_PAGE_SIZE, hiddenCount)} more · {hiddenCount} remaining
+          </button>
+        )}
       </div>
     </div>
   );
@@ -241,7 +278,7 @@ function KanbanColumn({ stage, deals }: { stage: PipelineStage; deals: Deal[] })
 
 // ── Add Deal Form ────────────────────────────────────────────────────────────
 
-interface AssocItem { id: number; label: string; sub: string; }
+interface AssocItem { id: number; label: string; sub: string; company_id?: number; }
 
 function AddDealDrawer({
   stages,
@@ -252,9 +289,14 @@ function AddDealDrawer({
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [form, setForm] = useState({ name: "", amount: "", close_date: "", stage_id: stages[0]?.id ?? 0, owner: "" });
+  const [form, setForm] = useState({ name: "", amount: "", close_date: "", stage_id: stages[0]?.id ?? 0, owner: "", description: "" });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [userEmails, setUserEmails] = useState<string[]>([]);
+
+  useEffect(() => {
+    API.get("/admin/users/emails").then((r) => setUserEmails(Array.isArray(r.data) ? r.data : [])).catch(() => {});
+  }, []);
 
   // Contacts multi-select
   const [contactSearch, setContactSearch] = useState("");
@@ -271,8 +313,8 @@ function AddDealDrawer({
     if (q.length < 2) { setContactResults([]); return; }
     const res = await API.get("/contacts", { params: { search: q, limit: 8 } });
     const list = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
-    setContactResults(list.map((c: { id: number; first_name: string; last_name?: string; email: string }) => ({
-      id: c.id, label: `${c.first_name} ${c.last_name ?? ""}`.trim(), sub: c.email,
+    setContactResults(list.map((c: { id: number; first_name: string; last_name?: string; email: string; company_id?: number }) => ({
+      id: c.id, label: `${c.first_name} ${c.last_name ?? ""}`.trim(), sub: c.email, company_id: c.company_id,
     })));
   }
 
@@ -285,8 +327,24 @@ function AddDealDrawer({
     })));
   }
 
-  function addContact(item: AssocItem) {
-    if (!selectedContacts.find((c) => c.id === item.id)) setSelectedContacts((p) => [...p, item]);
+  async function addContact(item: AssocItem) {
+    if (!selectedContacts.find((c) => c.id === item.id)) {
+      setSelectedContacts((p) => [...p, item]);
+      // Auto-fetch and set contact's company as primary
+      if (item.company_id) {
+        setSelectedCompanies((prev) => {
+          if (prev.find((c) => c.id === item.company_id)) return prev;
+          // Fetch asynchronously then update
+          API.get(`/companies/${item.company_id}`).then((res) => {
+            const co = res.data;
+            const companyItem: AssocItem = { id: co.id, label: co.name, sub: co.industry ?? "" };
+            setSelectedCompanies((p) => p.find((c) => c.id === co.id) ? p : [...p, companyItem]);
+            setPrimaryCompanyId((curr) => curr ?? co.id);
+          }).catch(() => { /* ignore if company fetch fails */ });
+          return prev;
+        });
+      }
+    }
     setContactSearch(""); setContactResults([]);
   }
 
@@ -305,6 +363,9 @@ function AddDealDrawer({
     e.preventDefault();
     setError("");
     if (!form.name.trim()) { setError("Deal name is required."); return; }
+    if (selectedContacts.length === 0 && selectedCompanies.length === 0) {
+      setError("Associate at least one contact or company with this deal."); return;
+    }
     if (selectedCompanies.length > 0 && !primaryCompanyId) { setError("Mark one company as primary."); return; }
     setSaving(true);
     try {
@@ -321,6 +382,7 @@ function AddDealDrawer({
         company_ids: selectedCompanies.map((c) => c.id),
         primary_company_id: primaryCompanyId || undefined,
         primary_contact_id: selectedContacts[0]?.id || undefined,
+        description: form.description.trim() || undefined,
       });
       onCreated();
       onClose();
@@ -372,14 +434,33 @@ function AddDealDrawer({
               </div>
             </div>
             <div>
-              <label className="text-xs font-semibold text-slate-700 mb-1 block">Owner</label>
-              <Input value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} className="h-9 text-sm" placeholder="your@email.com" />
+              <label className="text-xs font-semibold text-slate-700 mb-1 block">Deal Owner</label>
+              <div className="relative">
+                <select value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} className="w-full h-9 border border-slate-200 rounded-lg px-3 text-sm text-slate-900 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-orange-500">
+                  <option value="">— Select owner —</option>
+                  {userEmails.map((email) => <option key={email} value={email}>{email}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+              </div>
             </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-slate-700 mb-1 block">Description / Notes</label>
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              rows={3}
+              placeholder="Additional context, goals, or notes for this deal…"
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none"
+            />
           </div>
 
           {/* Companies */}
           <div>
-            <label className="text-xs font-semibold text-slate-700 mb-1 block">Companies <span className="text-slate-400 font-normal">(search & add; mark one primary)</span></label>
+            <label className="text-xs font-semibold text-slate-700 mb-1 block">
+              Companies <span className="text-red-500">*</span> <span className="text-slate-400 font-normal">(required if no contact; mark one primary)</span>
+            </label>
             <div className="relative">
               <Input value={companySearch} onChange={(e) => { setCompanySearch(e.target.value); searchCompanies(e.target.value); }} className="h-9 text-sm" placeholder="Search companies…" />
               {companyResults.length > 0 && (
@@ -415,7 +496,9 @@ function AddDealDrawer({
 
           {/* Contacts */}
           <div>
-            <label className="text-xs font-semibold text-slate-700 mb-1 block">Contacts <span className="text-slate-400 font-normal">(search & add multiple)</span></label>
+            <label className="text-xs font-semibold text-slate-700 mb-1 block">
+              Contacts <span className="text-red-500">*</span> <span className="text-slate-400 font-normal">(required if no company; auto-links company)</span>
+            </label>
             <div className="relative">
               <Input value={contactSearch} onChange={(e) => { setContactSearch(e.target.value); searchContacts(e.target.value); }} className="h-9 text-sm" placeholder="Search contacts by name or email…" />
               {contactResults.length > 0 && (
@@ -452,6 +535,16 @@ function AddDealDrawer({
   );
 }
 
+// Only trigger collision when pointer is physically inside a droppable/sortable.
+// closestCorners (the previous algorithm) matches by nearest corner distance,
+// which causes a column whose corners happen to be geometrically close to the
+// sidebar to fire even when the pointer is nowhere near it.
+const kanbanCollision: CollisionDetection = (args) => {
+  const intersections = rectIntersection(args);
+  if (intersections.length > 0) return intersections;
+  return [];
+};
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DealsPage() {
@@ -460,6 +553,7 @@ export default function DealsPage() {
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [columnLimits, setColumnLimits] = useState<Record<number, number>>({});
   const { toast } = useToast();
 
   // CSV import
@@ -468,6 +562,22 @@ export default function DealsPage() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ created: number; failed: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  function updateScrollButtons() {
+    const el = boardRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 0);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  }
+
+  function scrollBoard(dir: "left" | "right") {
+    const el = boardRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir === "left" ? -280 : 280, behavior: "smooth" });
+  }
 
   async function handleImport() {
     if (!importFile) return;
@@ -511,6 +621,16 @@ export default function DealsPage() {
 
   useEffect(() => { fetchData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    const el = boardRef.current;
+    if (!el) return;
+    updateScrollButtons();
+    el.addEventListener("scroll", updateScrollButtons);
+    const ro = new ResizeObserver(updateScrollButtons);
+    ro.observe(el);
+    return () => { el.removeEventListener("scroll", updateScrollButtons); ro.disconnect(); };
+  }, [stages]); // re-run when stages load
+
   const grouped = useCallback((): Record<number, Deal[]> => {
     const map: Record<number, Deal[]> = {};
     stages.forEach((s) => { map[s.id] = []; });
@@ -540,19 +660,14 @@ export default function DealsPage() {
     setActiveId(null);
     if (!over) return;
     const dealId = active.id as number;
-    const previousStageId = findStageForDeal(dealId);
+    const overIdRaw = over.id as string | number;
 
-    let nextStageId: number | null = null;
-    if (typeof over.id === "number") {
-      nextStageId = findStageForDeal(over.id as number) ?? (stages.some((s) => s.id === over.id) ? (over.id as number) : null);
-    } else {
-      nextStageId = null;
-    }
-    // over.id is the droppable id which we set to stage.id (number)
-    if (!nextStageId) {
-      const stageMatch = stages.find((s) => s.id === over.id);
-      if (stageMatch) nextStageId = stageMatch.id;
-    }
+    // Stage droppables use "stage-{id}" prefix to avoid colliding with deal IDs.
+    const isStage = typeof overIdRaw === "string" && overIdRaw.startsWith("stage-");
+    const nextStageId: number | null = isStage
+      ? Number((overIdRaw as string).replace("stage-", ""))
+      : findStageForDeal(overIdRaw as number);
+    const previousStageId = findStageForDeal(dealId);
 
     if (!previousStageId || !nextStageId || previousStageId === nextStageId) return;
 
@@ -602,38 +717,48 @@ export default function DealsPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
-      {/* Top bar */}
-      <div className="px-6 py-4 border-b border-slate-200 bg-white flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-sm">
-                <Briefcase className="w-4 h-4 text-white" />
-              </div>
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight">Deals</h1>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={kanbanCollision}
+      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
+    <div className="flex flex-col" style={{ height: "100vh", maxWidth: "100%", overflow: "hidden" }}>
+      {/* Top bar — sticky so it never scrolls with the board */}
+      <div className="flex-none px-6 py-3 border-b border-slate-200 bg-white z-10">
+        <div className="flex items-center justify-between gap-4 min-w-0">
+          {/* Left: title */}
+          <div className="flex items-center gap-2 min-w-0 shrink-0">
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-sm flex-shrink-0">
+              <Briefcase className="w-4 h-4 text-white" />
             </div>
-            <p className="text-sm text-slate-500 mt-0.5 ml-9">Drag cards to move deals between stages</p>
+            <div className="min-w-0">
+              <h1 className="text-lg font-bold text-slate-900 tracking-tight">Deals</h1>
+              <p className="text-xs text-slate-500 hidden sm:block">Drag cards between stages</p>
+            </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-3">
-              <div className="flex flex-col items-center px-4 py-2 rounded-xl bg-slate-50 border border-slate-200">
-                <p className="text-base font-bold text-slate-900">{deals.length}</p>
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Total</p>
+
+          {/* Right: metrics + actions — always in view */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="hidden lg:flex items-center gap-2">
+              <div className="flex flex-col items-center px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200">
+                <p className="text-sm font-bold text-slate-900">{deals.length}</p>
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Total</p>
               </div>
-              <div className="flex flex-col items-center px-4 py-2 rounded-xl bg-blue-50 border border-blue-200">
-                <p className="text-base font-bold text-blue-700">{formatAmount(totalValue) ?? "₹0"}</p>
-                <p className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider">Pipeline</p>
+              <div className="flex flex-col items-center px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200">
+                <p className="text-sm font-bold text-blue-700">{formatAmount(totalValue) ?? "₹0"}</p>
+                <p className="text-[9px] font-semibold text-blue-400 uppercase tracking-wider">Pipeline</p>
               </div>
-              <div className="flex flex-col items-center px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200">
-                <p className="text-base font-bold text-emerald-700">{formatAmount(wonValue) ?? "₹0"}</p>
-                <p className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider">Won</p>
+              <div className="flex flex-col items-center px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200">
+                <p className="text-sm font-bold text-emerald-700">{formatAmount(wonValue) ?? "₹0"}</p>
+                <p className="text-[9px] font-semibold text-emerald-500 uppercase tracking-wider">Won</p>
               </div>
             </div>
             <Button
               variant="outline"
               size="sm"
-              className="h-8 text-xs font-semibold border-slate-200"
+              className="h-8 text-xs font-semibold border-slate-200 whitespace-nowrap"
               onClick={() => { setImportOpen(true); setImportResult(null); setImportFile(null); }}
             >
               <Upload className="w-3.5 h-3.5 mr-1.5" />
@@ -641,7 +766,7 @@ export default function DealsPage() {
             </Button>
             <Button
               size="sm"
-              className="bg-orange-600 hover:bg-orange-700 h-8 text-xs font-semibold"
+              className="bg-orange-600 hover:bg-orange-700 h-8 text-xs font-semibold whitespace-nowrap"
               onClick={() => setAddOpen(true)}
             >
               <Plus className="w-3.5 h-3.5 mr-1" />
@@ -651,23 +776,41 @@ export default function DealsPage() {
         </div>
       </div>
 
-      {/* Board */}
-      <div className="flex-1 overflow-x-auto overflow-y-hidden p-4">
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCorners}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-        >
+      {/* Board — only this scrolls horizontally */}
+      <div className="flex-1 min-h-0 flex relative">
+        {/* Left scroll button */}
+        {canScrollLeft && (
+          <button
+            onClick={() => scrollBoard("left")}
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-20 w-9 h-16 flex items-center justify-center bg-white border border-slate-200 rounded-r-xl shadow-md hover:bg-orange-50 hover:border-orange-300 hover:text-orange-600 transition-all text-slate-500"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+        )}
+
+        <div ref={boardRef} className="kanban-scroll flex-1 min-h-0 overflow-x-auto overflow-y-hidden p-4">
           <div className="flex gap-3 h-full">
             {stages.map((stage) => (
-              <KanbanColumn key={stage.id} stage={stage} deals={groups[stage.id] ?? []} />
+              <KanbanColumn
+                key={stage.id}
+                stage={stage}
+                deals={groups[stage.id] ?? []}
+                limit={columnLimits[stage.id] ?? COLUMN_PAGE_SIZE}
+                onShowMore={() => setColumnLimits((prev) => ({ ...prev, [stage.id]: (prev[stage.id] ?? COLUMN_PAGE_SIZE) + COLUMN_PAGE_SIZE }))}
+              />
             ))}
           </div>
-          <DragOverlay>
-            {activeDeal ? <DealCard deal={activeDeal} overlay /> : null}
-          </DragOverlay>
-        </DndContext>
+        </div>
+
+        {/* Right scroll button */}
+        {canScrollRight && (
+          <button
+            onClick={() => scrollBoard("right")}
+            className="absolute right-0 top-1/2 -translate-y-1/2 z-20 w-9 h-16 flex items-center justify-center bg-white border border-slate-200 rounded-l-xl shadow-md hover:bg-orange-50 hover:border-orange-300 hover:text-orange-600 transition-all text-slate-500"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+        )}
       </div>
 
       {addOpen && (
@@ -712,5 +855,9 @@ export default function DealsPage() {
         </div>
       )}
     </div>
+    <DragOverlay>
+      {activeDeal ? <DealCard deal={activeDeal} overlay /> : null}
+    </DragOverlay>
+    </DndContext>
   );
 }

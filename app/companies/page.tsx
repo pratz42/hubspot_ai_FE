@@ -27,6 +27,7 @@ function LinkedinIcon({ className }: { className?: string }) {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import API from "@/lib/api";
+import { Pagination } from "@/components/pagination";
 
 interface Company {
   id: number;
@@ -92,8 +93,12 @@ const BLANK: Partial<Company> = {
   linkedin_url: "",
 };
 
+const PER_PAGE = 25;
+
 export default function CompaniesPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -111,11 +116,13 @@ export default function CompaniesPage() {
   const [importing, setImporting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  async function fetchCompanies() {
+  async function fetchCompanies(p = page) {
+    setLoading(true);
     try {
-      const res = await API.get("/companies", { params: { limit: 500 } });
+      const res = await API.get("/companies", { params: { page: p, per_page: PER_PAGE, search: search || undefined } });
       const data: Company[] = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
       setCompanies(data);
+      setTotal(res.data?.total ?? data.length);
     } catch {
       setCompanies([]);
     } finally {
@@ -138,11 +145,14 @@ export default function CompaniesPage() {
     } catch { /* ignore */ }
   }
 
+  useEffect(() => { fetchCompanies(1); fetchContacts(); fetchUsers(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
-    fetchCompanies();
-    fetchContacts();
-    fetchUsers();
-  }, []);
+    const t = setTimeout(() => { setPage(1); fetchCompanies(1); }, 350);
+    return () => clearTimeout(t);
+  }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { fetchCompanies(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const contactsByCompany = useMemo(() => {
     const map: Record<number, Contact[]> = {};
@@ -451,6 +461,8 @@ export default function CompaniesPage() {
           </table>
         </div>
       )}
+
+      <Pagination page={page} total={total} perPage={PER_PAGE} onChange={(p) => setPage(p)} />
 
       {/* Add Company Drawer */}
       {drawerOpen && (
