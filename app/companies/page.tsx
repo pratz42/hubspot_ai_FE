@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useRef } from "react";
+import Link from "next/link";
 import {
   Search,
   Building2,
@@ -348,7 +349,7 @@ export default function CompaniesPage() {
                           {getInitials(company.name)}
                         </div>
                         <div className="min-w-0">
-                          <p className="font-semibold text-slate-900 text-sm truncate">{company.name}</p>
+                          <Link href={`/companies/${company.id}`} className="font-semibold text-slate-900 text-sm truncate hover:text-orange-600 transition-colors">{company.name}</Link>
                           <div className="flex items-center gap-2 mt-0.5">
                             {company.domain && (
                               <p className="text-xs text-slate-400 truncate">{company.domain}</p>

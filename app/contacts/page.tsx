@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useRef } from "react";
+import Link from "next/link";
 import {
   Search,
   Mail,
@@ -373,7 +374,7 @@ export default function ContactsPage() {
                           {getInitials(contact.first_name, contact.last_name)}
                         </div>
                         <div>
-                          <p className="font-semibold text-slate-900 text-sm">{fullName}</p>
+                          <Link href={`/contacts/${contact.id}`} className="font-semibold text-slate-900 text-sm hover:text-orange-600 transition-colors">{fullName}</Link>
                           <p className="text-xs text-slate-400">{contact.email}</p>
                         </div>
                       </div>
@@ -382,11 +383,11 @@ export default function ContactsPage() {
                       {contact.title ?? <span className="text-slate-300">—</span>}
                     </td>
                     <td className="py-3.5 px-5">
-                      {companyName ? (
-                        <div className="flex items-center gap-1.5 text-sm text-slate-700">
+                      {companyName && contact.company_id ? (
+                        <Link href={`/companies/${contact.company_id}`} className="flex items-center gap-1.5 text-sm text-slate-700 hover:text-orange-600 transition-colors">
                           <Building2 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                           <span className="font-medium">{companyName}</span>
-                        </div>
+                        </Link>
                       ) : <span className="text-slate-300 text-xs">—</span>}
                     </td>
                     <td className="py-3.5 px-5">
