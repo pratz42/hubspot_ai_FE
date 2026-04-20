@@ -38,6 +38,8 @@ import {
   Filter,
   Briefcase,
   Sparkles,
+  LayoutList,
+  AlignJustify,
 } from "lucide-react";
 import API, { extractArray } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
@@ -49,6 +51,8 @@ import { QueryInterpretationBanner } from "@/components/leads/QueryInterpretatio
 import { QueryLoadingState } from "@/components/leads/QueryLoadingState";
 import { QueryErrorState } from "@/components/leads/QueryErrorState";
 import type { NLQueryResponse } from "@/components/leads/nl-query-types";
+import { StageView } from "./StageView";
+import type { StageLead } from "./StageView";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -292,6 +296,9 @@ export default function LeadsPage() {
   const [aiResult, setAiResult] = useState<NLQueryResult | null>(null);
   const [aiError, setAiError] = useState("");
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+
+  // View toggle
+  const [view, setView] = useState<"stage" | "table">("stage");
 
   // CSV Import modal
   const [importOpen, setImportOpen] = useState(false);
@@ -706,6 +713,32 @@ export default function LeadsPage() {
             <Download className="w-3.5 h-3.5" />Export
           </button>
 
+          <div className="w-px h-5 bg-slate-100 mx-0.5" />
+
+          {/* View toggle */}
+          <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setView("stage")}
+              className={`flex items-center gap-1 h-7 px-2.5 rounded-md text-xs font-semibold transition-all ${
+                view === "stage"
+                  ? "bg-white shadow-sm text-slate-800"
+                  : "text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              <LayoutList className="w-3.5 h-3.5" />Stage
+            </button>
+            <button
+              onClick={() => setView("table")}
+              className={`flex items-center gap-1 h-7 px-2.5 rounded-md text-xs font-semibold transition-all ${
+                view === "table"
+                  ? "bg-white shadow-sm text-slate-800"
+                  : "text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              <AlignJustify className="w-3.5 h-3.5" />Table
+            </button>
+          </div>
+
           {/* Right side */}
           <div className="ml-auto flex items-center gap-3">
             {/* Result count */}
@@ -827,7 +860,16 @@ export default function LeadsPage() {
         {/* AI loading */}
         {aiSearching && <QueryLoadingState />}
 
-        {/* ── Table ───────────────────────────────────────────────── */}
+        {/* ── Stage view / Table view ─────────────────────────────── */}
+        {view === "stage" ? (
+          <div className="p-4">
+            <StageView
+              leads={displayLeads as StageLead[]}
+              onEdit={(lead, e) => openEditDrawer(lead as Lead, e)}
+              onConvertToDeal={handleConvertToDeal}
+            />
+          </div>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[960px] text-sm border-collapse">
             <thead>
@@ -1236,6 +1278,7 @@ export default function LeadsPage() {
               </tbody>
             </table>
           </div>
+        )}
 
           {!aiResult && (
             <Pagination page={page} total={total} perPage={PER_PAGE} onChange={(p) => setPage(p)} />

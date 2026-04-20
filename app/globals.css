@@ -163,3 +163,11 @@ body {
 .ai-banner .ai-icon-breathe {
   animation: ai-icon-breathe 3s ease-in-out infinite;
 }
+
+/* ── AI Analysis tab section header animations ─────────────────── */
+.ai-section-header .ai-shimmer-strip {
+  animation: ai-shimmer 8s ease-in-out infinite;
+}
+.ai-breathe {
+  animation: ai-icon-breathe 3s ease-in-out infinite;
+}

@@ -14,7 +14,6 @@ import {
   Calendar,
   Target,
   Brain,
-  TrendingUp,
   DollarSign,
   Globe,
   ExternalLink,
@@ -123,6 +122,34 @@ function getScoreNarrative(scoreComment?: string): string | undefined {
   return (match ? scoreComment.substring(0, match.index).trim() : scoreComment) || undefined;
 }
 
+interface ScoreBreakdown {
+  intentTotal: number | null;
+  intentMax: number;
+  evidenceTotal: number | null;
+  evidenceMax: number;
+  items: { category: string; label: string; delta: number; running: number }[];
+}
+
+function parseScoreBreakdown(scoreComment?: string): ScoreBreakdown | null {
+  if (!scoreComment) return null;
+  const intentMatch = scoreComment.match(/intent\s+(?:subtotal\s+)?([\d.]+)\/([\d]+)/i);
+  const evidenceMatch = scoreComment.match(/evidence\s+(?:subtotal\s+)?([\d.]+)\/([\d]+)/i);
+  const items: ScoreBreakdown["items"] = [];
+  const itemRegex = /(intent|evidence):\s*([^\n]+?):\s*([+-][\d.]+)\s*->\s*([\d.]+)/gi;
+  let match;
+  while ((match = itemRegex.exec(scoreComment)) !== null) {
+    items.push({ category: match[1].toLowerCase(), label: match[2].trim(), delta: parseFloat(match[3]), running: parseFloat(match[4]) });
+  }
+  if (!intentMatch && !evidenceMatch && items.length === 0) return null;
+  return {
+    intentTotal: intentMatch ? parseFloat(intentMatch[1]) : null,
+    intentMax: intentMatch ? parseInt(intentMatch[2]) : 70,
+    evidenceTotal: evidenceMatch ? parseFloat(evidenceMatch[1]) : null,
+    evidenceMax: evidenceMatch ? parseInt(evidenceMatch[2]) : 30,
+    items,
+  };
+}
+
 function getScoreConfig(score?: number) {
   if (!score) return { color: "text-slate-500", bg: "bg-slate-100", ring: "ring-slate-200", label: "Unscored", bar: "bg-slate-400" };
   if (score >= 80) return { color: "text-emerald-700", bg: "bg-emerald-50", ring: "ring-emerald-300", label: "Hot Lead", bar: "bg-emerald-500" };
@@ -217,6 +244,9 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
   const scoreConfig = getScoreConfig(lead.ai_score);
   const statusConfig = getPipelineStage(lead.status);
   const grad = avatarGradient(lead.name);
+  const bd = parseScoreBreakdown(lead.score_comment);
+  const intentItems = bd?.items.filter((x) => x.category === "intent") ?? [];
+  const evidenceItems = bd?.items.filter((x) => x.category === "evidence") ?? [];
 
   return (
     <div className="p-6 max-w-7xl">
@@ -355,9 +385,11 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                         <span className="text-xs text-slate-400">/ 100</span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-2">
+                        <div className="ai-section-header relative flex items-center gap-2 mb-2 overflow-hidden">
                           <h3 className="font-bold text-slate-900 text-sm">AI Lead Score</h3>
                           <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${scoreConfig.bg} ${scoreConfig.color}`}>{scoreConfig.label}</span>
+                          <span className={`w-1.5 h-1.5 rounded-full ${scoreConfig.bar} animate-pulse flex-shrink-0`} />
+                          <span className="ai-shimmer-strip absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-orange-400/15 to-transparent pointer-events-none" aria-hidden="true" />
                         </div>
                         <div className="h-2 bg-slate-100 rounded-full overflow-hidden mb-2">
                           <div className={`h-full rounded-full ${scoreConfig.bar} transition-all`} style={{ width: `${lead.ai_score}%` }} />
@@ -371,8 +403,11 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                 {/* AI Reasoning */}
                 {lead.ai_reason && (
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-                    <h3 className="text-sm font-bold text-violet-700 flex items-center gap-1.5 mb-3">
-                      <Brain className="w-4 h-4" /> AI Analysis
+                    <h3 className="ai-section-header relative text-sm font-bold text-violet-700 flex items-center gap-1.5 mb-3 overflow-hidden">
+                      <Brain className="w-4 h-4 ai-breathe flex-shrink-0" />
+                      AI Analysis
+                      <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse flex-shrink-0" />
+                      <span className="ai-shimmer-strip absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-violet-400/15 to-transparent pointer-events-none" style={{ animationDelay: "1s" }} aria-hidden="true" />
                     </h3>
                     <div className="bg-violet-50 rounded-lg p-4 border border-violet-100">
                       <p className="text-sm text-violet-900 leading-relaxed">{lead.ai_reason}</p>
@@ -383,11 +418,14 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                 {/* Sales Strategy */}
                 {lead.sales_strategy && (
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-                    <h3 className="text-sm font-bold text-indigo-700 flex items-center gap-1.5 mb-3">
-                      <TrendingUp className="w-4 h-4" /> Sales Strategy
+                    <h3 className="ai-section-header relative text-sm font-bold text-orange-700 flex items-center gap-1.5 mb-3 overflow-hidden">
+                      <Target className="w-4 h-4 ai-breathe flex-shrink-0" />
+                      Sales Strategy
+                      <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse flex-shrink-0" />
+                      <span className="ai-shimmer-strip absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-orange-400/15 to-transparent pointer-events-none" style={{ animationDelay: "2s" }} aria-hidden="true" />
                     </h3>
-                    <div className="bg-indigo-50 rounded-lg p-4 border border-indigo-100">
-                      <p className="text-sm text-indigo-900 leading-relaxed">{lead.sales_strategy}</p>
+                    <div className="bg-orange-50 rounded-lg p-4 border border-orange-200">
+                      <p className="text-sm text-orange-900 leading-relaxed">{lead.sales_strategy}</p>
                     </div>
                   </div>
                 )}
@@ -395,8 +433,11 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                 {/* Recommended Offerings */}
                 {lead.recommended_offerings && lead.recommended_offerings.length > 0 && (
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-                    <h3 className="text-sm font-bold text-orange-700 flex items-center gap-1.5 mb-3">
-                      <Sparkles className="w-4 h-4" /> Recommended Offerings
+                    <h3 className="ai-section-header relative text-sm font-bold text-orange-700 flex items-center gap-1.5 mb-3 overflow-hidden">
+                      <Sparkles className="w-4 h-4 ai-breathe flex-shrink-0" />
+                      Recommended Offerings
+                      <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse flex-shrink-0" />
+                      <span className="ai-shimmer-strip absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-orange-400/15 to-transparent pointer-events-none" style={{ animationDelay: "3s" }} aria-hidden="true" />
                     </h3>
                     <div className="flex flex-wrap gap-2">
                       {lead.recommended_offerings.map((offering, i) => (
@@ -412,8 +453,11 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                 {/* Next Action */}
                 {lead.next_action && (
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-                    <h3 className="text-sm font-bold text-emerald-700 flex items-center gap-1.5 mb-3">
-                      <CheckCircle2 className="w-4 h-4" /> Recommended Next Action
+                    <h3 className="ai-section-header relative text-sm font-bold text-emerald-700 flex items-center gap-1.5 mb-3 overflow-hidden">
+                      <CheckCircle2 className="w-4 h-4 ai-breathe flex-shrink-0" />
+                      Recommended Next Action
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
+                      <span className="ai-shimmer-strip absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-emerald-400/15 to-transparent pointer-events-none" style={{ animationDelay: "4s" }} aria-hidden="true" />
                     </h3>
                     <div className="flex items-start gap-3 bg-emerald-50 rounded-lg p-4 border border-emerald-200">
                       <Target className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
@@ -687,18 +731,53 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                   <p className="text-xs text-slate-500 font-medium">{scoreConfig.label}</p>
                 </div>
               </div>
-              {lead.evidence_cards && lead.evidence_cards.length > 0 && (
-                <div className="space-y-1.5 mt-3 pt-3 border-t border-slate-100">
-                  {lead.evidence_cards.slice(0, 3).map((c, i) => (
-                    <div key={i} className="flex items-center justify-between text-xs">
-                      <span className="text-slate-500 truncate flex-1">{c.signal_type}</span>
-                      {c.points != null && (
-                        <span className="text-slate-800 font-bold ml-2">{c.points >= 0 ? "+" : ""}{c.points}</span>
+              {bd && (
+                <div className="space-y-3 mt-3 pt-3 border-t border-slate-100">
+                  {bd.intentTotal !== null && (
+                    <div>
+                      <div className="flex justify-between items-center text-[11px] mb-1">
+                        <span className="font-semibold text-orange-600 uppercase tracking-wide">Intent</span>
+                        <span className="font-bold text-slate-700 tabular-nums">{bd.intentTotal} / {bd.intentMax}</span>
+                      </div>
+                      <div className="h-1.5 bg-orange-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-orange-400 rounded-full" style={{ width: `${(bd.intentTotal / bd.intentMax) * 100}%` }} />
+                      </div>
+                      {intentItems.length > 0 && (
+                        <div className="mt-2 space-y-1 pl-1">
+                          {intentItems.map((item, i) => (
+                            <div key={i} className="flex justify-between items-center text-[11px]">
+                              <span className="text-slate-400 capitalize">{item.label.replace(/_/g, " ")}</span>
+                              <span className={`font-semibold tabular-nums ${item.delta > 0 ? "text-emerald-600" : item.delta < 0 ? "text-red-500" : "text-slate-300"}`}>
+                                {item.delta > 0 ? "+" : ""}{item.delta % 1 === 0 ? item.delta.toFixed(0) : item.delta.toFixed(2)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
-                  ))}
-                  {lead.evidence_cards.length > 3 && (
-                    <p className="text-xs text-slate-400 text-center pt-1">+{lead.evidence_cards.length - 3} more signals</p>
+                  )}
+                  {bd.evidenceTotal !== null && (
+                    <div className={bd.intentTotal !== null ? "pt-3 border-t border-slate-100" : ""}>
+                      <div className="flex justify-between items-center text-[11px] mb-1">
+                        <span className="font-semibold text-teal-600 uppercase tracking-wide">Evidence</span>
+                        <span className="font-bold text-slate-700 tabular-nums">{bd.evidenceTotal} / {bd.evidenceMax}</span>
+                      </div>
+                      <div className="h-1.5 bg-teal-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-teal-400 rounded-full" style={{ width: `${(bd.evidenceTotal / bd.evidenceMax) * 100}%` }} />
+                      </div>
+                      {evidenceItems.length > 0 && (
+                        <div className="mt-2 space-y-1 pl-1">
+                          {evidenceItems.map((item, i) => (
+                            <div key={i} className="flex justify-between items-center text-[11px]">
+                              <span className="text-slate-400 capitalize">{item.label.replace(/_/g, " ")}</span>
+                              <span className={`font-semibold tabular-nums ${item.delta > 0 ? "text-emerald-600" : item.delta < 0 ? "text-red-500" : "text-slate-300"}`}>
+                                {item.delta > 0 ? "+" : ""}{item.delta % 1 === 0 ? item.delta.toFixed(0) : item.delta.toFixed(2)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
