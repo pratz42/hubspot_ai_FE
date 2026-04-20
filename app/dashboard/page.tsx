@@ -252,20 +252,28 @@ export default function Dashboard() {
 
       {/* AI Copilot banner */}
       {avgScore > 0 && (
-        <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 p-5 shadow-lg shadow-violet-200/40">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_right,rgba(255,255,255,0.08)_0%,transparent_60%)]" />
+        <div className="ai-banner relative overflow-hidden rounded-xl bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 p-5">
+          {/* Depth overlay */}
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_right,rgba(255,255,255,0.12)_0%,transparent_65%)]" />
+          {/* Shimmer sweep */}
+          <span
+            className="ai-shimmer-strip absolute inset-y-0 w-1/4 bg-gradient-to-r from-transparent via-white/30 to-transparent pointer-events-none"
+            aria-hidden="true"
+          />
           <div className="relative flex items-center gap-4 text-white">
-            <div className="w-11 h-11 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0 border border-white/20">
-              <Brain className="w-5 h-5" />
+            {/* Icon */}
+            <div className="w-11 h-11 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0 border border-white/25 shadow-inner">
+              <Brain className="ai-icon-breathe w-5 h-5" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                <p className="font-semibold text-sm">Hubspot AI Insight</p>
-                <span className="px-1.5 py-0.5 rounded-full bg-white/15 text-xs font-medium border border-white/20">
+                <p className="font-semibold text-sm tracking-tight">Hubspot AI Insight</p>
+                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white/20 text-[11px] font-semibold border border-white/25">
+                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
                   Live
                 </span>
               </div>
-              <p className="text-xs text-purple-200 leading-relaxed">
+              <p className="text-xs text-orange-100/90 leading-relaxed">
                 Your top {topLeads.length} leads average{" "}
                 <span className="font-bold text-white">{avgScore}/100</span> AI score.
                 {topLeads[0] &&
@@ -275,7 +283,7 @@ export default function Dashboard() {
             <Link href="/leads">
               <Button
                 size="sm"
-                className="bg-white text-violet-700 hover:bg-purple-50 flex-shrink-0 font-semibold shadow-sm h-8"
+                className="bg-white text-orange-600 hover:bg-orange-50 hover:text-orange-700 flex-shrink-0 font-semibold shadow-sm shadow-orange-900/20 h-8 transition-all duration-150 hover:scale-[1.03] active:scale-[0.97]"
               >
                 <Zap className="w-3.5 h-3.5 mr-1.5" />
                 Act Now
@@ -352,12 +360,17 @@ export default function Dashboard() {
         </Card>
 
         {/* Top AI leads */}
-        <Card className="border-slate-200 shadow-sm">
-          <CardHeader className="pb-4 pt-5 px-5">
+        <Card className="ai-card relative overflow-hidden border-slate-200">
+          {/* Shimmer sweep across card header */}
+          <span
+            className="ai-shimmer-strip absolute top-0 h-16 w-1/2 bg-gradient-to-r from-transparent via-orange-100/50 to-transparent pointer-events-none"
+            aria-hidden="true"
+          />
+          <CardHeader className="pb-4 pt-5 px-5 relative">
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
-                  <Brain className="w-3.5 h-3.5 text-violet-500" />
+                  <Brain className="ai-icon-breathe w-3.5 h-3.5 text-orange-500" />
                   Top AI Leads
                 </CardTitle>
                 <p className="text-xs text-slate-500 mt-0.5">Highest AI scores</p>
