@@ -6,11 +6,39 @@ import { Button } from "@/components/ui/button";
 import {
   ArrowLeft, Mail, Phone, Building2, Calendar, Globe, MapPin,
   Briefcase, Star, User, Tag, AlertCircle, Loader2, ExternalLink,
-  Activity, TrendingUp, Clock, DollarSign,
+  Activity, TrendingUp, Clock, DollarSign, ChevronDown, ChevronUp,
+  Zap, CheckCircle2, XCircle, AlertTriangle, ArrowUpRight,
 } from "lucide-react";
 import API from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import { getPipelineStage } from "@/lib/pipeline";
+
+interface ScoreComponent {
+  component: string;
+  raw_score: number;
+  weight: number;
+  weighted_points: number;
+  reason: string;
+}
+
+interface PreAIBreakdown {
+  score_breakdown?: {
+    components: ScoreComponent[];
+    final_score: number;
+    summary: string;
+  };
+  icp_fit?: {
+    score: number;
+    reason: string;
+    matched_industry: boolean;
+    matched_market: boolean;
+    matched_persona: boolean;
+    notes: string[];
+  };
+  source_quality?: { score: number; reason: string };
+  vertex_score?: { score: number; reason: string };
+  offering_alignment?: { alignment_score: number; reason: string };
+}
 
 interface Contact {
   id: number;
@@ -29,6 +57,10 @@ interface Contact {
   owner?: string;
   notes?: string;
   created_at: string;
+  pre_ai_score?: number | null;
+  pre_ai_reason?: string | null;
+  pre_ai_breakdown?: PreAIBreakdown | null;
+  pre_ai_scored_at?: string | null;
 }
 
 interface Company {
@@ -113,6 +145,66 @@ function formatAmount(v?: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(v);
 }
 
+function getReadiness(contact: Contact): { label: string; color: string; bg: string; icon: React.ElementType } {
+  const score = contact.pre_ai_score;
+  if (score == null) return { label: "Not Scored", color: "text-slate-500", bg: "bg-slate-100", icon: AlertCircle };
+  if (!contact.company_id) return { label: "Missing Company", color: "text-slate-600", bg: "bg-slate-100", icon: AlertTriangle };
+  if (!contact.title && score >= 55) return { label: "Missing Persona", color: "text-amber-700", bg: "bg-amber-100", icon: AlertTriangle };
+  if (score >= 75) return { label: "Lead Ready", color: "text-emerald-700", bg: "bg-emerald-100", icon: CheckCircle2 };
+  if (score >= 60) return { label: "Strong ICP Fit", color: "text-teal-700", bg: "bg-teal-100", icon: CheckCircle2 };
+  if (score >= 45) return { label: "Needs Review", color: "text-amber-700", bg: "bg-amber-100", icon: AlertTriangle };
+  return { label: "Low Confidence", color: "text-red-600", bg: "bg-red-100", icon: XCircle };
+}
+
+function ScoreRing({ score }: { score: number }) {
+  const isHigh = score >= 75;
+  const isMid = score >= 50;
+  const ringColor = isHigh ? "border-emerald-400" : isMid ? "border-amber-400" : "border-red-400";
+  const bgColor = isHigh ? "bg-emerald-50" : isMid ? "bg-amber-50" : "bg-red-50";
+  const textColor = isHigh ? "text-emerald-700" : isMid ? "text-amber-700" : "text-red-600";
+  const subColor = isHigh ? "text-emerald-500" : isMid ? "text-amber-500" : "text-red-400";
+  const label = isHigh ? "Strong" : isMid ? "Moderate" : "Low";
+
+  return (
+    <div className="flex items-center gap-4">
+      <div className={`w-20 h-20 rounded-full border-[4px] ${ringColor} ${bgColor} flex flex-col items-center justify-center shadow-md flex-shrink-0`}>
+        <span className={`text-2xl font-bold leading-none ${textColor}`}>{Math.round(score)}</span>
+        <span className={`text-[10px] font-semibold uppercase tracking-wide mt-0.5 ${subColor}`}>/ 100</span>
+      </div>
+      <div>
+        <p className={`text-lg font-bold ${textColor}`}>{label}</p>
+        <p className="text-xs text-slate-400 mt-0.5">Pre-AI Score</p>
+        <p className="text-[10px] text-slate-300 mt-1">AI qualification index</p>
+      </div>
+    </div>
+  );
+}
+
+function ComponentBar({ component, raw_score, weight, weighted_points, reason }: ScoreComponent) {
+  const pct = Math.min(100, Math.max(0, raw_score));
+  const barColor = raw_score >= 75 ? "bg-emerald-400" : raw_score >= 50 ? "bg-amber-400" : "bg-red-400";
+  const label = component.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-slate-700">{label}</span>
+        <div className="flex items-center gap-2 text-[11px]">
+          <span className="text-slate-500">{raw_score.toFixed(0)}/100</span>
+          <span className="text-slate-300">×</span>
+          <span className="text-slate-400">wt {weight}</span>
+          <span className="text-slate-300">=</span>
+          <span className="font-bold text-slate-700">{weighted_points.toFixed(1)} pts</span>
+        </div>
+      </div>
+      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+        <div className={`h-full ${barColor} rounded-full transition-all duration-500`} style={{ width: `${pct}%` }} />
+      </div>
+      <p className="text-[11px] text-slate-400 leading-relaxed">{reason}</p>
+    </div>
+  );
+}
+
 export default function ContactDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [contact, setContact] = useState<Contact | null>(null);
@@ -121,6 +213,7 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -175,9 +268,14 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
   const grad = avatarGradient(fullName);
   const lcColor = LIFECYCLE_COLORS[contact.lifecycle_stage ?? "other"] ?? "bg-slate-100 text-slate-600";
   const lcLabel = LIFECYCLE_LABELS[contact.lifecycle_stage ?? "other"] ?? contact.lifecycle_stage ?? "—";
+  const readiness = getReadiness(contact);
+  const ReadinessIcon = readiness.icon;
+  const breakdown = contact.pre_ai_breakdown;
+  const components = breakdown?.score_breakdown?.components ?? [];
+  const icpFit = breakdown?.icp_fit;
 
   return (
-    <div className="p-6 max-w-6xl space-y-5">
+    <div className="p-6 max-w-7xl space-y-5">
       <Link href="/contacts">
         <button className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 font-medium transition-colors mb-1">
           <ArrowLeft className="w-4 h-4" />Back to Contacts
@@ -196,6 +294,12 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
               <div className="flex items-center gap-2.5 flex-wrap mb-1">
                 <h1 className="text-xl font-bold text-slate-900">{fullName}</h1>
                 <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold ${lcColor}`}>{lcLabel}</span>
+                {contact.pre_ai_score != null && (
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold ${readiness.bg} ${readiness.color}`}>
+                    <ReadinessIcon className="w-3 h-3" />
+                    {readiness.label}
+                  </span>
+                )}
               </div>
               <p className="text-sm text-slate-500">
                 {contact.title && <span className="font-medium text-slate-700">{contact.title}</span>}
@@ -223,13 +327,19 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
                 </Button>
               </a>
             )}
+            <Link href={`/leads?contact_id=${contact.id}`}>
+              <Button size="sm" className="h-8 text-xs bg-orange-600 hover:bg-orange-700 font-semibold">
+                <Zap className="w-3.5 h-3.5 mr-1.5" />Convert to Lead
+              </Button>
+            </Link>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* Left: About */}
+        {/* LEFT: Identity */}
         <div className="space-y-4">
+          {/* About */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
             <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">About</h2>
             <div className="space-y-3">
@@ -295,8 +405,132 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
           )}
         </div>
 
-        {/* Right: Leads + Deals */}
+        {/* RIGHT: AI Intelligence + Records */}
         <div className="lg:col-span-2 space-y-4">
+
+          {/* AI Intelligence Panel */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            {/* Panel header band */}
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white">
+              <Zap className="w-3.5 h-3.5 text-orange-500" />
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">AI Intelligence</span>
+            </div>
+
+            <div className="p-5">
+              {contact.pre_ai_score == null ? (
+                <div className="flex items-center gap-3 py-4">
+                  <AlertCircle className="w-8 h-8 text-slate-200" />
+                  <div>
+                    <p className="text-sm font-semibold text-slate-500">Not yet scored</p>
+                    <p className="text-xs text-slate-400">This contact hasn't been evaluated by the AI scoring engine.</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {/* Score + readiness row */}
+                  <div className="flex items-start justify-between gap-4 flex-wrap">
+                    <ScoreRing score={contact.pre_ai_score} />
+                    <div className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl ${readiness.bg}`}>
+                      <ReadinessIcon className={`w-4 h-4 ${readiness.color}`} />
+                      <div>
+                        <p className={`text-xs font-bold ${readiness.color}`}>{readiness.label}</p>
+                        <p className="text-[10px] text-slate-400">Readiness status</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* AI Reason */}
+                  {contact.pre_ai_reason && (
+                    <div className="bg-slate-50 rounded-lg px-4 py-3 border border-slate-100">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">AI Assessment</p>
+                      <p className="text-sm text-slate-700 leading-relaxed">{contact.pre_ai_reason}</p>
+                    </div>
+                  )}
+
+                  {/* ICP signals */}
+                  {icpFit && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { label: "Industry Match", ok: icpFit.matched_industry },
+                        { label: "Market Match", ok: icpFit.matched_market },
+                        { label: "Persona Match", ok: icpFit.matched_persona },
+                        { label: "Company Profile", ok: false },
+                      ].map(({ label, ok }) => (
+                        <div key={label} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium ${ok ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-slate-50 border-slate-200 text-slate-400"}`}>
+                          {ok ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" /> : <XCircle className="w-3.5 h-3.5 text-slate-300 flex-shrink-0" />}
+                          {label}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Breakdown toggle */}
+                  {components.length > 0 && (
+                    <div>
+                      <button
+                        onClick={() => setBreakdownOpen((o) => !o)}
+                        className="flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors group"
+                      >
+                        {breakdownOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        {breakdownOpen ? "Hide" : "View"} score breakdown
+                      </button>
+
+                      {breakdownOpen && (
+                        <div className="mt-4 space-y-4 pt-4 border-t border-slate-100">
+                          {components.map((comp) => (
+                            <ComponentBar key={comp.component} {...comp} />
+                          ))}
+                          {breakdown?.score_breakdown?.summary && (
+                            <div className="bg-slate-50 rounded-lg px-3 py-2.5 border border-slate-100">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Formula</p>
+                              <p className="text-xs text-slate-500">{breakdown.score_breakdown.summary}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Conversion actions footer */}
+            <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/60">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">Actions</p>
+              <div className="flex flex-wrap gap-2">
+                <Link href={`/leads?contact_id=${contact.id}`}>
+                  <Button size="sm" className="h-8 text-xs bg-orange-600 hover:bg-orange-700 font-semibold">
+                    <Zap className="w-3.5 h-3.5 mr-1.5" />Convert to Lead
+                  </Button>
+                </Link>
+                {contact.email && (
+                  <a href={`mailto:${contact.email}`}>
+                    <Button size="sm" variant="outline" className="h-8 text-xs border-slate-200 hover:border-indigo-300 hover:text-indigo-600">
+                      <Mail className="w-3.5 h-3.5 mr-1.5" />Send Email
+                    </Button>
+                  </a>
+                )}
+                <Link href={`/leads?contact_id=${contact.id}`}>
+                  <Button size="sm" variant="outline" className="h-8 text-xs border-slate-200">
+                    <Activity className="w-3.5 h-3.5 mr-1.5" />View Leads
+                    {leads.length > 0 && (
+                      <span className="ml-1.5 bg-orange-100 text-orange-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">{leads.length}</span>
+                    )}
+                  </Button>
+                </Link>
+                <Link href={`/deals?contact_id=${contact.id}`}>
+                  <Button size="sm" variant="outline" className="h-8 text-xs border-slate-200">
+                    <DollarSign className="w-3.5 h-3.5 mr-1.5" />View Deals
+                    {deals.length > 0 && (
+                      <span className="ml-1.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">{deals.length}</span>
+                    )}
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          </div>
+
+          {/* Associated Leads */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
@@ -317,9 +551,9 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
               <div className="text-center py-10">
                 <TrendingUp className="w-8 h-8 text-slate-200 mx-auto mb-2" />
                 <p className="text-sm text-slate-400">No leads associated with this contact yet.</p>
-                <Link href="/leads">
+                <Link href={`/leads?contact_id=${contact.id}`}>
                   <button className="mt-3 text-xs font-semibold text-orange-600 hover:text-orange-700">
-                    Create a lead from the Leads page →
+                    Convert this contact to a lead →
                   </button>
                 </Link>
               </div>
@@ -348,7 +582,7 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
                               <Star className="w-3 h-3" />{lead.ai_score.toFixed(0)}
                             </span>
                           )}
-                          <ExternalLink className="w-3.5 h-3.5 text-slate-300" />
+                          <ArrowUpRight className="w-3.5 h-3.5 text-slate-300" />
                         </div>
                       </div>
                     </Link>
@@ -402,7 +636,7 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
                         {deal.probability != null && (
                           <span className="text-xs font-semibold text-slate-500">{deal.probability}%</span>
                         )}
-                        <ExternalLink className="w-3.5 h-3.5 text-slate-300" />
+                        <ArrowUpRight className="w-3.5 h-3.5 text-slate-300" />
                       </div>
                     </div>
                   </Link>
