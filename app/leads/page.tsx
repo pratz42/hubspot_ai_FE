@@ -90,6 +90,18 @@ interface Lead {
   ai_score?: number;
   ai_reason?: string;
   score_comment?: string;
+  score_breakdown?: {
+    components?: { label: string; value: number; reason: string }[];
+    intent_score?: number;
+    evidence_score?: number;
+    final_score?: number;
+    summary?: string;
+    score_breakdown?: {
+      components?: { label: string; value: number; reason: string }[];
+      intent_score?: number;
+      evidence_score?: number;
+    };
+  };
   sales_strategy?: string;
   recommended_offerings?: string[];
   tags?: string[];
@@ -1013,8 +1025,8 @@ export default function LeadsPage() {
 
                     {/* Insight */}
                     <td className="py-3 px-4 align-middle min-w-[180px] max-w-[220px]">
-                      {lead.ai_reason && (
-                        <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{lead.ai_reason}</p>
+                      {lead.score_comment && (
+                        <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{lead.score_comment}</p>
                       )}
                       <button
                         className="mt-1 text-[10px] text-orange-500 hover:text-orange-700 font-semibold flex items-center gap-0.5 transition-colors"
@@ -1060,10 +1072,15 @@ export default function LeadsPage() {
 
                     {/* Expanded detail panel */}
                     {expandedId === lead.id && (() => {
-                      const bd = parseScoreBreakdown(lead.score_comment);
+                      const sb = lead.score_breakdown;
+                      const structComps = sb?.components ?? sb?.score_breakdown?.components ?? [];
+                      const hasStructured = structComps.length > 0;
+                      const bd = hasStructured ? null : parseScoreBreakdown(lead.score_comment);
                       const narrative = getScoreNarrative(lead.score_comment);
-                      const intentItems = bd?.items.filter((x) => x.category === "intent") ?? [];
-                      const evidenceItems = bd?.items.filter((x) => x.category === "evidence") ?? [];
+                      const intentItems = structComps.filter((c) => c.label.startsWith("intent:"));
+                      const evidenceItems = structComps.filter((c) => c.label.startsWith("evidence:"));
+                      const bdIntentItems = bd?.items.filter((x) => x.category === "intent") ?? [];
+                      const bdEvidenceItems = bd?.items.filter((x) => x.category === "evidence") ?? [];
                       return (
                         <tr className="border-b border-slate-100 bg-gradient-to-b from-orange-50/20 to-white">
                           <td colSpan={8} className="px-6 py-5">
@@ -1093,11 +1110,8 @@ export default function LeadsPage() {
                                   <Brain className="w-3 h-3 text-violet-500" /> AI Analysis
                                 </p>
                                 <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
-                                  {lead.ai_reason && (
-                                    <p className="text-xs font-semibold text-slate-800 leading-relaxed">{lead.ai_reason}</p>
-                                  )}
-                                  {narrative && (
-                                    <p className="text-xs text-slate-500 leading-relaxed border-t border-slate-100 pt-3">{narrative}</p>
+                                  {lead.score_comment && (
+                                    <p className="text-xs text-slate-700 leading-relaxed">{narrative ?? lead.score_comment}</p>
                                   )}
                                 </div>
                               </div>

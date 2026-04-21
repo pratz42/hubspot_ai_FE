@@ -39,6 +39,17 @@ export interface StageLead {
   ai_score?: number;
   ai_reason?: string;
   score_comment?: string;
+  score_breakdown?: {
+    components?: { label: string; value: number; reason: string }[];
+    intent_score?: number;
+    evidence_score?: number;
+    final_score?: number;
+    score_breakdown?: {
+      components?: { label: string; value: number; reason: string }[];
+      intent_score?: number;
+      evidence_score?: number;
+    };
+  };
   sales_strategy?: string;
   recommended_offerings?: string[];
   tags?: string[];
@@ -257,9 +268,16 @@ function LeadRowCard({ lead, onEdit, onConvertToDeal }: LeadRowCardProps) {
   const grad = avatarGradient(lead.name);
   const sc = getScoreConfig(lead.ai_score);
   const stage = getPipelineStage(lead.status);
-  const bd = parseScoreBreakdown(lead.score_comment);
-  const intentItems = bd?.items.filter((x) => x.category === "intent") ?? [];
-  const evidenceItems = bd?.items.filter((x) => x.category === "evidence") ?? [];
+  const sb = lead.score_breakdown;
+  const structComps = sb?.components ?? sb?.score_breakdown?.components ?? [];
+  const hasStructured = structComps.length > 0;
+  const bd = hasStructured ? null : parseScoreBreakdown(lead.score_comment);
+  const intentItems = hasStructured
+    ? structComps.filter((c) => c.label.startsWith("intent:"))
+    : (bd?.items.filter((x) => x.category === "intent") ?? []);
+  const evidenceItems = hasStructured
+    ? structComps.filter((c) => c.label.startsWith("evidence:"))
+    : (bd?.items.filter((x) => x.category === "evidence") ?? []);
 
   return (
     <div
@@ -411,12 +429,12 @@ function LeadRowCard({ lead, onEdit, onConvertToDeal }: LeadRowCardProps) {
                 </div>
               )}
               {/* AI Analysis */}
-              {lead.ai_reason && (
+              {lead.score_comment && (
                 <div className="rounded-xl bg-violet-50 border border-violet-100 p-3.5">
                   <p className="text-[10px] font-bold text-violet-600 uppercase tracking-wider flex items-center gap-1 mb-2">
                     <Brain className="w-3 h-3" /> AI Analysis
                   </p>
-                  <p className="text-xs text-slate-700 leading-relaxed">{lead.ai_reason}</p>
+                  <p className="text-xs text-slate-700 leading-relaxed">{lead.score_comment}</p>
                 </div>
               )}
             </div>
@@ -443,10 +461,58 @@ function LeadRowCard({ lead, onEdit, onConvertToDeal }: LeadRowCardProps) {
                   <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                     <Zap className="w-3 h-3 text-orange-400" /> Evidence &amp; Score Breakdown
                   </p>
-                  {bd && (
+                  {(hasStructured || bd) && (
                     <div className="bg-white rounded-xl border border-slate-200 p-4">
                       <div className="space-y-3">
-                        {bd.intentTotal !== null && (
+                        {/* Structured breakdown (new API) */}
+                        {hasStructured && intentItems.length > 0 && (
+                          <div>
+                            <div className="flex justify-between items-center text-[11px] mb-1">
+                              <span className="font-semibold text-orange-600 uppercase tracking-wide">Intent</span>
+                              <span className="font-bold text-slate-700 tabular-nums">
+                                {sb?.intent_score ?? sb?.score_breakdown?.intent_score ?? "—"} / 70
+                              </span>
+                            </div>
+                            <div className="h-2 bg-orange-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-orange-400 rounded-full" style={{ width: `${Math.min(100, ((sb?.intent_score ?? sb?.score_breakdown?.intent_score ?? 0) / 70) * 100)}%` }} />
+                            </div>
+                            <div className="mt-2 space-y-1 pl-1">
+                              {intentItems.map((comp, i) => (
+                                <div key={i} className="flex justify-between items-center text-[11px]">
+                                  <span className="text-slate-400 capitalize">{comp.label.replace("intent: ", "")}</span>
+                                  <span className={`font-semibold tabular-nums ${comp.value > 0 ? "text-emerald-600" : "text-slate-300"}`}>
+                                    +{comp.value % 1 === 0 ? comp.value.toFixed(0) : comp.value.toFixed(1)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {hasStructured && evidenceItems.length > 0 && (
+                          <div className={intentItems.length > 0 ? "pt-3 border-t border-slate-100" : ""}>
+                            <div className="flex justify-between items-center text-[11px] mb-1">
+                              <span className="font-semibold text-teal-600 uppercase tracking-wide">Evidence</span>
+                              <span className="font-bold text-slate-700 tabular-nums">
+                                {sb?.evidence_score ?? sb?.score_breakdown?.evidence_score ?? "—"} / 30
+                              </span>
+                            </div>
+                            <div className="h-2 bg-teal-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-teal-400 rounded-full" style={{ width: `${Math.min(100, ((sb?.evidence_score ?? sb?.score_breakdown?.evidence_score ?? 0) / 30) * 100)}%` }} />
+                            </div>
+                            <div className="mt-2 space-y-1 pl-1">
+                              {evidenceItems.map((comp, i) => (
+                                <div key={i} className="flex justify-between items-center text-[11px]">
+                                  <span className="text-slate-400 capitalize">{comp.label.replace("evidence: ", "")}</span>
+                                  <span className={`font-semibold tabular-nums ${comp.value > 0 ? "text-emerald-600" : "text-slate-300"}`}>
+                                    +{comp.value % 1 === 0 ? comp.value.toFixed(0) : comp.value.toFixed(1)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {/* Fallback: regex-parsed breakdown (legacy) */}
+                        {!hasStructured && bd && bd.intentTotal !== null && (
                           <div>
                             <div className="flex justify-between items-center text-[11px] mb-1">
                               <span className="font-semibold text-orange-600 uppercase tracking-wide">Intent</span>
@@ -455,21 +521,9 @@ function LeadRowCard({ lead, onEdit, onConvertToDeal }: LeadRowCardProps) {
                             <div className="h-2 bg-orange-100 rounded-full overflow-hidden">
                               <div className="h-full bg-orange-400 rounded-full" style={{ width: `${(bd.intentTotal / bd.intentMax) * 100}%` }} />
                             </div>
-                            {intentItems.length > 0 && (
-                              <div className="mt-2 space-y-1 pl-1">
-                                {intentItems.map((item, i) => (
-                                  <div key={i} className="flex justify-between items-center text-[11px]">
-                                    <span className="text-slate-400 capitalize">{item.label.replace(/_/g, " ")}</span>
-                                    <span className={`font-semibold tabular-nums ${item.delta > 0 ? "text-emerald-600" : item.delta < 0 ? "text-red-500" : "text-slate-300"}`}>
-                                      {item.delta > 0 ? "+" : ""}{item.delta % 1 === 0 ? item.delta.toFixed(0) : item.delta.toFixed(2)}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
                           </div>
                         )}
-                        {bd.evidenceTotal !== null && (
+                        {!hasStructured && bd && bd.evidenceTotal !== null && (
                           <div className="pt-3 border-t border-slate-100">
                             <div className="flex justify-between items-center text-[11px] mb-1">
                               <span className="font-semibold text-teal-600 uppercase tracking-wide">Evidence</span>
@@ -478,18 +532,6 @@ function LeadRowCard({ lead, onEdit, onConvertToDeal }: LeadRowCardProps) {
                             <div className="h-2 bg-teal-100 rounded-full overflow-hidden">
                               <div className="h-full bg-teal-400 rounded-full" style={{ width: `${(bd.evidenceTotal / bd.evidenceMax) * 100}%` }} />
                             </div>
-                            {evidenceItems.length > 0 && (
-                              <div className="mt-2 space-y-1 pl-1">
-                                {evidenceItems.map((item, i) => (
-                                  <div key={i} className="flex justify-between items-center text-[11px]">
-                                    <span className="text-slate-400 capitalize">{item.label.replace(/_/g, " ")}</span>
-                                    <span className={`font-semibold tabular-nums ${item.delta > 0 ? "text-emerald-600" : item.delta < 0 ? "text-red-500" : "text-slate-300"}`}>
-                                      {item.delta > 0 ? "+" : ""}{item.delta % 1 === 0 ? item.delta.toFixed(0) : item.delta.toFixed(2)}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
                           </div>
                         )}
                       </div>

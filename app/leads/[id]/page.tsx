@@ -45,6 +45,27 @@ interface EvidenceCard {
   source_excerpt: string;
 }
 
+interface ScoreComponent {
+  label: string;
+  value: number;
+  reason: string;
+}
+
+interface LeadScoreBreakdown {
+  components?: ScoreComponent[];
+  intent_score?: number;
+  evidence_score?: number;
+  final_score?: number;
+  summary?: string;
+  score_breakdown?: {
+    components?: ScoreComponent[];
+    intent_score?: number;
+    evidence_score?: number;
+    final_score?: number;
+    summary?: string;
+  };
+}
+
 interface Communication {
   id: number;
   lead_id: number;
@@ -78,6 +99,7 @@ interface Lead {
   ai_score?: number;
   ai_reason?: string;
   score_comment?: string;
+  score_breakdown?: LeadScoreBreakdown;
   sales_strategy?: string;
   recommended_offerings?: string[];
   next_action?: string;
@@ -244,9 +266,21 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
   const scoreConfig = getScoreConfig(lead.ai_score);
   const statusConfig = getPipelineStage(lead.status);
   const grad = avatarGradient(lead.name);
-  const bd = parseScoreBreakdown(lead.score_comment);
-  const intentItems = bd?.items.filter((x) => x.category === "intent") ?? [];
-  const evidenceItems = bd?.items.filter((x) => x.category === "evidence") ?? [];
+
+  // Use structured score_breakdown when available, fall back to regex parsing of score_comment
+  const sb = lead.score_breakdown;
+  const structuredComponents: ScoreComponent[] =
+    sb?.components ?? sb?.score_breakdown?.components ?? [];
+  const intentScore = sb?.intent_score ?? sb?.score_breakdown?.intent_score ?? null;
+  const evidenceScore = sb?.evidence_score ?? sb?.score_breakdown?.evidence_score ?? null;
+  const breakdownSummary = sb?.summary ?? sb?.score_breakdown?.summary;
+  const intentItems = structuredComponents.filter((c) => c.label.startsWith("intent:"));
+  const evidenceItems = structuredComponents.filter((c) => c.label.startsWith("evidence:"));
+
+  // Fallback: regex parsing when no structured data
+  const bd = structuredComponents.length === 0 ? parseScoreBreakdown(lead.score_comment) : null;
+  const bdIntentItems = bd?.items.filter((x) => x.category === "intent") ?? [];
+  const bdEvidenceItems = bd?.items.filter((x) => x.category === "evidence") ?? [];
 
   return (
     <div className="p-6 max-w-7xl">
@@ -401,7 +435,7 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                 )}
 
                 {/* AI Reasoning */}
-                {lead.ai_reason && (
+                {lead.score_comment && (
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
                     <h3 className="ai-section-header relative text-sm font-bold text-violet-700 flex items-center gap-1.5 mb-3 overflow-hidden">
                       <Brain className="w-4 h-4 ai-breathe flex-shrink-0" />
@@ -410,7 +444,7 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                       <span className="ai-shimmer-strip absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-violet-400/15 to-transparent pointer-events-none" style={{ animationDelay: "1s" }} aria-hidden="true" />
                     </h3>
                     <div className="bg-violet-50 rounded-lg p-4 border border-violet-100">
-                      <p className="text-sm text-violet-900 leading-relaxed">{lead.ai_reason}</p>
+                      <p className="text-sm text-violet-900 leading-relaxed">{lead.score_comment}</p>
                     </div>
                   </div>
                 )}
@@ -466,7 +500,7 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                   </div>
                 )}
 
-                {!lead.ai_score && !lead.ai_reason && !lead.sales_strategy && (
+                {!lead.ai_score && !lead.score_comment && !lead.sales_strategy && (
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center py-14">
                     <div className="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mb-3">
                       <Brain className="w-6 h-6 text-slate-400" />
@@ -731,7 +765,62 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                   <p className="text-xs text-slate-500 font-medium">{scoreConfig.label}</p>
                 </div>
               </div>
-              {bd && (
+              {/* Structured breakdown (new API) */}
+              {structuredComponents.length > 0 && (
+                <div className="space-y-3 mt-3 pt-3 border-t border-slate-100">
+                  {intentScore !== null && (
+                    <div>
+                      <div className="flex justify-between items-center text-[11px] mb-1">
+                        <span className="font-semibold text-orange-600 uppercase tracking-wide">Intent</span>
+                        <span className="font-bold text-slate-700 tabular-nums">{intentScore} / 70</span>
+                      </div>
+                      <div className="h-1.5 bg-orange-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-orange-400 rounded-full" style={{ width: `${Math.min(100, (intentScore / 70) * 100)}%` }} />
+                      </div>
+                      {intentItems.length > 0 && (
+                        <div className="mt-2 space-y-1 pl-1">
+                          {intentItems.map((comp, i) => (
+                            <div key={i} className="flex justify-between items-center text-[11px]">
+                              <span className="text-slate-400 capitalize">{comp.label.replace("intent: ", "")}</span>
+                              <span className={`font-semibold tabular-nums ${comp.value > 0 ? "text-emerald-600" : "text-slate-300"}`}>
+                                +{comp.value % 1 === 0 ? comp.value.toFixed(0) : comp.value.toFixed(1)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {evidenceScore !== null && (
+                    <div className={intentScore !== null ? "pt-3 border-t border-slate-100" : ""}>
+                      <div className="flex justify-between items-center text-[11px] mb-1">
+                        <span className="font-semibold text-teal-600 uppercase tracking-wide">Evidence</span>
+                        <span className="font-bold text-slate-700 tabular-nums">{evidenceScore} / 30</span>
+                      </div>
+                      <div className="h-1.5 bg-teal-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-teal-400 rounded-full" style={{ width: `${Math.min(100, (evidenceScore / 30) * 100)}%` }} />
+                      </div>
+                      {evidenceItems.length > 0 && (
+                        <div className="mt-2 space-y-1 pl-1">
+                          {evidenceItems.map((comp, i) => (
+                            <div key={i} className="flex justify-between items-center text-[11px]">
+                              <span className="text-slate-400 capitalize">{comp.label.replace("evidence: ", "")}</span>
+                              <span className={`font-semibold tabular-nums ${comp.value > 0 ? "text-emerald-600" : "text-slate-300"}`}>
+                                +{comp.value % 1 === 0 ? comp.value.toFixed(0) : comp.value.toFixed(1)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {breakdownSummary && (
+                    <p className="text-[10px] text-slate-400 pt-2 border-t border-slate-100">{breakdownSummary}</p>
+                  )}
+                </div>
+              )}
+              {/* Fallback: regex-parsed breakdown (legacy score_comment) */}
+              {structuredComponents.length === 0 && bd && (
                 <div className="space-y-3 mt-3 pt-3 border-t border-slate-100">
                   {bd.intentTotal !== null && (
                     <div>
@@ -742,9 +831,9 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                       <div className="h-1.5 bg-orange-100 rounded-full overflow-hidden">
                         <div className="h-full bg-orange-400 rounded-full" style={{ width: `${(bd.intentTotal / bd.intentMax) * 100}%` }} />
                       </div>
-                      {intentItems.length > 0 && (
+                      {bdIntentItems.length > 0 && (
                         <div className="mt-2 space-y-1 pl-1">
-                          {intentItems.map((item, i) => (
+                          {bdIntentItems.map((item, i) => (
                             <div key={i} className="flex justify-between items-center text-[11px]">
                               <span className="text-slate-400 capitalize">{item.label.replace(/_/g, " ")}</span>
                               <span className={`font-semibold tabular-nums ${item.delta > 0 ? "text-emerald-600" : item.delta < 0 ? "text-red-500" : "text-slate-300"}`}>
@@ -765,9 +854,9 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                       <div className="h-1.5 bg-teal-100 rounded-full overflow-hidden">
                         <div className="h-full bg-teal-400 rounded-full" style={{ width: `${(bd.evidenceTotal / bd.evidenceMax) * 100}%` }} />
                       </div>
-                      {evidenceItems.length > 0 && (
+                      {bdEvidenceItems.length > 0 && (
                         <div className="mt-2 space-y-1 pl-1">
-                          {evidenceItems.map((item, i) => (
+                          {bdEvidenceItems.map((item, i) => (
                             <div key={i} className="flex justify-between items-center text-[11px]">
                               <span className="text-slate-400 capitalize">{item.label.replace(/_/g, " ")}</span>
                               <span className={`font-semibold tabular-nums ${item.delta > 0 ? "text-emerald-600" : item.delta < 0 ? "text-red-500" : "text-slate-300"}`}>
