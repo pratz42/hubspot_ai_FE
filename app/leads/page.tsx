@@ -40,6 +40,11 @@ import {
   Sparkles,
   LayoutList,
   AlignJustify,
+  Flame,
+  Thermometer,
+  Activity,
+  AlertTriangle,
+  BookOpen,
 } from "lucide-react";
 import API, { extractArray } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
@@ -90,6 +95,24 @@ interface Lead {
   ai_score?: number;
   ai_reason?: string;
   score_comment?: string;
+  score_breakdown?: {
+    components?: { label: string; value: number; reason: string }[];
+    intent_score?: number;
+    evidence_score?: number;
+    final_score?: number;
+    summary?: string;
+    score_breakdown?: {
+      components?: { label: string; value: number; reason: string }[];
+      intent_score?: number;
+      evidence_score?: number;
+    };
+  };
+  final_score_breakdown?: {
+    summary?: string;
+    components?: { component: string; category: string; points: number; reason: string; running_total: number; formula: string }[];
+    totals?: { intent_score: number; evidence_score: number; raw_score: number; final_score: number };
+    final_policy_reason?: string;
+  };
   sales_strategy?: string;
   recommended_offerings?: string[];
   tags?: string[];
@@ -252,6 +275,41 @@ const getScoreNarrative = (scoreComment?: string): string | undefined => {
 const countActiveFilters = (f: ActiveFilters) =>
   Object.values(f).filter((v) => v !== "").length;
 
+interface ParsedKnowledge {
+  context?: string;
+  sellerPoints: { title: string; body: string }[];
+  campaignContext?: string;
+}
+
+const KNOWLEDGE_TITLES = [
+  "Lead Situation & Signals",
+  "Company Activity",
+  "Decision Context",
+  "Competitive Landscape",
+  "Financial & Growth Signals",
+];
+
+function parseKnowledge(text?: string): ParsedKnowledge {
+  if (!text) return { sellerPoints: [] };
+  const contextMatch = text.match(/Lead Context[:\s]+([\s\S]*?)(?=\n\s*Seller-Relevant|$)/i);
+  const context = contextMatch ? contextMatch[1].trim() : undefined;
+  const sellerSection = text.match(/Seller-Relevant Knowledge[:\s]+([\s\S]*?)(?=\n\s*Why This Matters|$)/i);
+  const sellerPoints: ParsedKnowledge["sellerPoints"] = [];
+  if (sellerSection) {
+    const pointRegex = /(\d+)\.\s+([\s\S]*?)(?=\n\s*\d+\.|$)/g;
+    let m;
+    while ((m = pointRegex.exec(sellerSection[1])) !== null) {
+      const idx = parseInt(m[1]) - 1;
+      sellerPoints.push({ title: KNOWLEDGE_TITLES[idx] ?? `Point ${m[1]}`, body: m[2].trim() });
+    }
+  }
+  const campaignMatch = text.match(/Why This Matters[^:]*:[:\s]+([\s\S]*?)(?=\n\s*Best-Fit Products|$)/i);
+  const campaignContext = campaignMatch ? campaignMatch[1].trim() : undefined;
+  return { context, sellerPoints, campaignContext };
+}
+
+type SmartFilter = "all" | "hot" | "warm" | "with_evidence" | "high_intent" | "needs_action";
+
 /* ── Main component ──────────────────────────────────────────────────── */
 
 const PER_PAGE = 25;
@@ -299,6 +357,9 @@ export default function LeadsPage() {
 
   // View toggle
   const [view, setView] = useState<"stage" | "table">("stage");
+
+  // AI smart filter
+  const [smartFilter, setSmartFilter] = useState<SmartFilter>("all");
 
   // CSV Import modal
   const [importOpen, setImportOpen] = useState(false);
@@ -627,9 +688,41 @@ export default function LeadsPage() {
   }
 
   const activeFilterCount = countActiveFilters(filters);
-  const displayLeads = aiResult ? aiResult.results : filteredLeads;
+  const baseLeads = aiResult ? aiResult.results : filteredLeads;
+
+  const getIntentScore = (l: Lead) =>
+    l.final_score_breakdown?.totals?.intent_score
+    ?? l.score_breakdown?.intent_score
+    ?? l.score_breakdown?.score_breakdown?.intent_score
+    ?? 0;
+
+  const hasBreakdownData = (l: Lead) =>
+    (l.final_score_breakdown?.components?.length ?? 0) > 0
+    || (l.score_breakdown?.components?.length ?? 0) > 0;
+
+  const smartFilteredLeads = smartFilter === "all" ? baseLeads : baseLeads.filter((l) => {
+    const score = l.ai_score ?? 0;
+    switch (smartFilter) {
+      case "hot": return score >= 80;
+      case "warm": return score >= 60 && score < 80;
+      case "with_evidence": return (l.evidence_cards?.length ?? 0) > 0;
+      case "high_intent": return getIntentScore(l) >= 50;
+      case "needs_action": return score < 60 && hasBreakdownData(l);
+      default: return true;
+    }
+  });
+  const displayLeads = smartFilteredLeads;
   const resultCount = aiResult ? aiResult.count : total;
   const aiPanelVisible = aiPanelOpen || !!aiResult || aiSearching || !!aiError;
+
+  const smartCounts = {
+    all: baseLeads.length,
+    hot: baseLeads.filter((l) => (l.ai_score ?? 0) >= 80).length,
+    warm: baseLeads.filter((l) => { const s = l.ai_score ?? 0; return s >= 60 && s < 80; }).length,
+    with_evidence: baseLeads.filter((l) => (l.evidence_cards?.length ?? 0) > 0).length,
+    high_intent: baseLeads.filter((l) => getIntentScore(l) >= 50).length,
+    needs_action: baseLeads.filter((l) => (l.ai_score ?? 0) < 60 && hasBreakdownData(l)).length,
+  };
 
   return (
     <div className="px-6 py-5 space-y-4 max-w-[1600px] mx-auto">
@@ -661,6 +754,38 @@ export default function LeadsPage() {
           </Button>
         </div>
       </div>
+
+      {/* ── AI Priority Intelligence Strip ─────────────────────────── */}
+      {!aiResult && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+          {([
+            { key: "all" as SmartFilter, label: "All Leads", icon: Activity, color: "text-slate-600", bg: "bg-slate-50 border-slate-200 hover:border-slate-300", activeBg: "bg-slate-700 border-slate-700", activeText: "text-white" },
+            { key: "hot" as SmartFilter, label: "Hot Leads", icon: Flame, color: "text-red-600", bg: "bg-red-50 border-red-100 hover:border-red-300", activeBg: "bg-red-500 border-red-500", activeText: "text-white", sublabel: "Score ≥ 80" },
+            { key: "warm" as SmartFilter, label: "Warm Leads", icon: Thermometer, color: "text-amber-600", bg: "bg-amber-50 border-amber-100 hover:border-amber-300", activeBg: "bg-amber-500 border-amber-500", activeText: "text-white", sublabel: "Score 60–79" },
+            { key: "with_evidence" as SmartFilter, label: "With Evidence", icon: Globe, color: "text-teal-600", bg: "bg-teal-50 border-teal-100 hover:border-teal-300", activeBg: "bg-teal-500 border-teal-500", activeText: "text-white", sublabel: "Web verified" },
+            { key: "high_intent" as SmartFilter, label: "High Intent", icon: Zap, color: "text-orange-600", bg: "bg-orange-50 border-orange-100 hover:border-orange-300", activeBg: "bg-orange-500 border-orange-500", activeText: "text-white", sublabel: "Intent ≥ 50/70" },
+            { key: "needs_action" as SmartFilter, label: "Needs Action", icon: AlertTriangle, color: "text-violet-600", bg: "bg-violet-50 border-violet-100 hover:border-violet-300", activeBg: "bg-violet-500 border-violet-500", activeText: "text-white", sublabel: "Score < 60" },
+          ] as { key: SmartFilter; label: string; icon: React.ElementType; color: string; bg: string; activeBg: string; activeText: string; sublabel?: string }[]).map(({ key, label, icon: Icon, color, bg, activeBg, activeText, sublabel }) => {
+            const isActive = smartFilter === key;
+            const count = smartCounts[key];
+            return (
+              <button
+                key={key}
+                onClick={() => setSmartFilter(key)}
+                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all ${isActive ? `${activeBg} ${activeText} shadow-sm` : `${bg} ${color}`}`}
+              >
+                <Icon className={`w-4 h-4 shrink-0 ${isActive ? "opacity-90" : ""}`} />
+                <div className="min-w-0">
+                  <div className={`text-xs font-semibold leading-tight ${isActive ? "text-white" : ""}`}>{label}</div>
+                  <div className={`text-[11px] tabular-nums font-bold ${isActive ? "text-white/80" : "text-slate-500"}`}>
+                    {count} {sublabel && <span className={`font-normal ${isActive ? "text-white/60" : "text-slate-400"}`}>· {sublabel}</span>}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── Main card ───────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
@@ -966,7 +1091,7 @@ export default function LeadsPage() {
                     </td>
 
                     {/* AI Score */}
-                    <td className="py-3 px-4 align-middle min-w-[110px]">
+                    <td className="py-3 px-4 align-middle min-w-[120px]">
                       {lead.ai_score != null ? (
                         <div className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-bold ${getScoreBorder(lead.ai_score)} ${getScoreColor(lead.ai_score)}`}>
                           <Star className="w-3 h-3" />
@@ -975,6 +1100,32 @@ export default function LeadsPage() {
                       ) : (
                         <span className="text-slate-200 text-sm">—</span>
                       )}
+                      {(() => {
+                        const sb = lead.score_breakdown;
+                        const intentScore = lead.final_score_breakdown?.totals?.intent_score ?? sb?.intent_score ?? sb?.score_breakdown?.intent_score;
+                        const evidenceScore = lead.final_score_breakdown?.totals?.evidence_score ?? sb?.evidence_score ?? sb?.score_breakdown?.evidence_score;
+                        if (intentScore == null && evidenceScore == null) return null;
+                        return (
+                          <div className="mt-1.5 space-y-0.5">
+                            {intentScore != null && (
+                              <div className="flex items-center gap-1">
+                                <div className="w-14 h-1 bg-orange-100 rounded-full overflow-hidden">
+                                  <div className="h-full bg-orange-400 rounded-full" style={{ width: `${Math.min((intentScore / 70) * 100, 100)}%` }} />
+                                </div>
+                                <span className="text-[9px] text-orange-500 font-semibold tabular-nums">{intentScore}/70</span>
+                              </div>
+                            )}
+                            {evidenceScore != null && (
+                              <div className="flex items-center gap-1">
+                                <div className="w-14 h-1 bg-teal-100 rounded-full overflow-hidden">
+                                  <div className="h-full bg-teal-400 rounded-full" style={{ width: `${Math.min((evidenceScore / 30) * 100, 100)}%` }} />
+                                </div>
+                                <span className="text-[9px] text-teal-500 font-semibold tabular-nums">{evidenceScore}/30</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       <div className="flex flex-col gap-0.5 mt-1">
                         {aiResult?.result_mode === "semantic" && (lead as Lead & { hybrid_score?: number }).hybrid_score != null && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-violet-50 text-violet-600 border border-violet-100 flex items-center gap-0.5 w-fit">
@@ -1013,8 +1164,8 @@ export default function LeadsPage() {
 
                     {/* Insight */}
                     <td className="py-3 px-4 align-middle min-w-[180px] max-w-[220px]">
-                      {lead.ai_reason && (
-                        <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{lead.ai_reason}</p>
+                      {lead.score_comment && (
+                        <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{lead.score_comment}</p>
                       )}
                       <button
                         className="mt-1 text-[10px] text-orange-500 hover:text-orange-700 font-semibold flex items-center gap-0.5 transition-colors"
@@ -1060,44 +1211,234 @@ export default function LeadsPage() {
 
                     {/* Expanded detail panel */}
                     {expandedId === lead.id && (() => {
-                      const bd = parseScoreBreakdown(lead.score_comment);
+                      const fsb = lead.final_score_breakdown;
+                      const sb = lead.score_breakdown;
+                      const fsbComps = fsb?.components ?? [];
+                      const hasFsb = fsbComps.length > 0;
+                      const legacyComps = !hasFsb ? (sb?.components ?? sb?.score_breakdown?.components ?? []) : [];
+                      const hasStructured = hasFsb || legacyComps.length > 0;
+                      const bd = hasStructured ? null : parseScoreBreakdown(lead.score_comment);
                       const narrative = getScoreNarrative(lead.score_comment);
-                      const intentItems = bd?.items.filter((x) => x.category === "intent") ?? [];
-                      const evidenceItems = bd?.items.filter((x) => x.category === "evidence") ?? [];
+                      const intentItems = hasFsb ? fsbComps.filter((c) => c.category === "Intent") : [];
+                      const evidenceItems = hasFsb ? fsbComps.filter((c) => c.category === "Evidence") : [];
+                      const legacyIntentItems = !hasFsb ? legacyComps.filter((c) => c.label.startsWith("intent:")) : [];
+                      const legacyEvidenceItems = !hasFsb ? legacyComps.filter((c) => c.label.startsWith("evidence:")) : [];
+                      const bdIntentItems = bd?.items.filter((x) => x.category === "intent") ?? [];
+                      const bdEvidenceItems = bd?.items.filter((x) => x.category === "evidence") ?? [];
+                      const intentScore = fsb?.totals?.intent_score ?? sb?.intent_score ?? sb?.score_breakdown?.intent_score;
+                      const evidenceScore = fsb?.totals?.evidence_score ?? sb?.evidence_score ?? sb?.score_breakdown?.evidence_score;
+                      const pk = parseKnowledge(lead.knowledge);
                       return (
                         <tr className="border-b border-slate-100 bg-gradient-to-b from-orange-50/20 to-white">
                           <td colSpan={8} className="px-6 py-5">
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                              <div className="space-y-2.5">
+                            {/* Top row: Sales Strategy + AI Analysis + Lead Situation */}
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                              {/* Sales Strategy */}
+                              <div className="space-y-2">
                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                                   <Target className="w-3 h-3 text-orange-500" /> Sales Strategy
                                 </p>
-                                <div className="bg-orange-50 rounded-xl border border-orange-200/70 p-4 space-y-3">
+                                <div className="bg-orange-50 rounded-xl border border-orange-200/70 p-3.5 space-y-3 h-full">
                                   {lead.sales_strategy && (
                                     <p className="text-xs text-slate-700 leading-relaxed">{lead.sales_strategy}</p>
                                   )}
                                   {lead.recommended_offerings && lead.recommended_offerings.length > 0 && (
                                     <div>
-                                      <p className="text-[10px] text-orange-600 font-bold uppercase tracking-wide mb-2">Recommended Offerings</p>
+                                      <p className="text-[10px] text-orange-600 font-bold uppercase tracking-wide mb-1.5">Recommended Offerings</p>
                                       <div className="flex flex-wrap gap-1.5">
                                         {lead.recommended_offerings.map((o, idx) => (
-                                          <span key={idx} className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${getOfferingColor(idx)}`}>{o}</span>
+                                          <span key={idx} className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${getOfferingColor(idx)}`}>{o}</span>
                                         ))}
                                       </div>
                                     </div>
                                   )}
+                                  {!lead.sales_strategy && (!lead.recommended_offerings || lead.recommended_offerings.length === 0) && (
+                                    <p className="text-xs text-slate-400 italic">No strategy data available.</p>
+                                  )}
                                 </div>
                               </div>
-                              <div className="space-y-2.5">
+
+                              {/* AI Analysis + Score Breakdown */}
+                              <div className="space-y-2">
                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                                   <Brain className="w-3 h-3 text-violet-500" /> AI Analysis
                                 </p>
-                                <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
-                                  {lead.ai_reason && (
-                                    <p className="text-xs font-semibold text-slate-800 leading-relaxed">{lead.ai_reason}</p>
+                                <div className="bg-white rounded-xl border border-slate-200 p-3.5 space-y-3">
+                                  {lead.score_comment && (
+                                    <p className="text-xs text-slate-700 leading-relaxed">{narrative ?? lead.score_comment}</p>
                                   )}
-                                  {narrative && (
-                                    <p className="text-xs text-slate-500 leading-relaxed border-t border-slate-100 pt-3">{narrative}</p>
+                                  {/* Score bars */}
+                                  {(hasStructured || bd) && (
+                                    <div className="pt-2 border-t border-slate-100 space-y-2">
+                                      {hasFsb ? (
+                                        <>
+                                          {intentScore != null && (
+                                            <div>
+                                              <div className="flex justify-between text-[11px] mb-1">
+                                                <span className="font-semibold text-orange-600 uppercase tracking-wide">Intent</span>
+                                                <span className="font-bold text-slate-700 tabular-nums">{intentScore} / 70</span>
+                                              </div>
+                                              <div className="h-1.5 bg-orange-100 rounded-full overflow-hidden">
+                                                <div className="h-full bg-orange-400 rounded-full" style={{ width: `${Math.min((intentScore / 70) * 100, 100)}%` }} />
+                                              </div>
+                                              {intentItems.length > 0 && (
+                                                <div className="mt-1.5 space-y-1 pl-1">
+                                                  {intentItems.map((comp, i) => (
+                                                    <div key={i} className="flex justify-between items-center text-[11px]">
+                                                      <span className="text-slate-400 truncate max-w-[160px]">{comp.component}</span>
+                                                      <span className={`font-semibold tabular-nums ${comp.points > 0 ? "text-green-600" : comp.points < 0 ? "text-red-500" : "text-slate-300"}`}>
+                                                        {comp.points > 0 ? "+" : ""}{comp.points}
+                                                      </span>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                          {evidenceScore != null && (
+                                            <div className="pt-2 border-t border-slate-100">
+                                              <div className="flex justify-between text-[11px] mb-1">
+                                                <span className="font-semibold text-teal-600 uppercase tracking-wide">Evidence</span>
+                                                <span className="font-bold text-slate-700 tabular-nums">{evidenceScore} / 30</span>
+                                              </div>
+                                              <div className="h-1.5 bg-teal-100 rounded-full overflow-hidden">
+                                                <div className="h-full bg-teal-400 rounded-full" style={{ width: `${Math.min((evidenceScore / 30) * 100, 100)}%` }} />
+                                              </div>
+                                              {evidenceItems.length > 0 && (
+                                                <div className="mt-1.5 space-y-1 pl-1">
+                                                  {evidenceItems.map((comp, i) => (
+                                                    <div key={i} className="flex justify-between items-center text-[11px]">
+                                                      <span className="text-slate-400 truncate max-w-[160px]">{comp.component}</span>
+                                                      <span className={`font-semibold tabular-nums ${comp.points > 0 ? "text-green-600" : comp.points < 0 ? "text-red-500" : "text-slate-300"}`}>
+                                                        {comp.points > 0 ? "+" : ""}{comp.points}
+                                                      </span>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                        </>
+                                      ) : legacyComps.length > 0 ? (
+                                        <>
+                                          {intentScore != null && legacyIntentItems.length > 0 && (
+                                            <div>
+                                              <div className="flex justify-between text-[11px] mb-1">
+                                                <span className="font-semibold text-orange-600 uppercase tracking-wide">Intent</span>
+                                                <span className="font-bold text-slate-700 tabular-nums">{intentScore} / 70</span>
+                                              </div>
+                                              <div className="h-1.5 bg-orange-100 rounded-full overflow-hidden">
+                                                <div className="h-full bg-orange-400 rounded-full" style={{ width: `${Math.min((intentScore / 70) * 100, 100)}%` }} />
+                                              </div>
+                                              <div className="mt-1.5 space-y-1 pl-1">
+                                                {legacyIntentItems.map((comp, i) => (
+                                                  <div key={i} className="flex justify-between items-center text-[11px]">
+                                                    <span className="text-slate-400 capitalize truncate max-w-[160px]">{comp.label.replace(/^intent:\s*/i, "").replace(/_/g, " ")}</span>
+                                                    <span className={`font-semibold tabular-nums ${comp.value > 0 ? "text-green-600" : comp.value < 0 ? "text-red-500" : "text-slate-300"}`}>
+                                                      {comp.value > 0 ? "+" : ""}{comp.value}
+                                                    </span>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+                                          {evidenceScore != null && legacyEvidenceItems.length > 0 && (
+                                            <div className="pt-2 border-t border-slate-100">
+                                              <div className="flex justify-between text-[11px] mb-1">
+                                                <span className="font-semibold text-teal-600 uppercase tracking-wide">Evidence</span>
+                                                <span className="font-bold text-slate-700 tabular-nums">{evidenceScore} / 30</span>
+                                              </div>
+                                              <div className="h-1.5 bg-teal-100 rounded-full overflow-hidden">
+                                                <div className="h-full bg-teal-400 rounded-full" style={{ width: `${Math.min((evidenceScore / 30) * 100, 100)}%` }} />
+                                              </div>
+                                              <div className="mt-1.5 space-y-1 pl-1">
+                                                {legacyEvidenceItems.map((comp, i) => (
+                                                  <div key={i} className="flex justify-between items-center text-[11px]">
+                                                    <span className="text-slate-400 capitalize truncate max-w-[160px]">{comp.label.replace(/^evidence:\s*/i, "").replace(/_/g, " ")}</span>
+                                                    <span className={`font-semibold tabular-nums ${comp.value > 0 ? "text-green-600" : comp.value < 0 ? "text-red-500" : "text-slate-300"}`}>
+                                                      {comp.value > 0 ? "+" : ""}{comp.value}
+                                                    </span>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+                                        </>
+                                      ) : bd ? (
+                                        <>
+                                          {bd.intentTotal !== null && (
+                                            <div>
+                                              <div className="flex justify-between text-[11px] mb-1">
+                                                <span className="font-semibold text-orange-600 uppercase tracking-wide">Intent</span>
+                                                <span className="font-bold text-slate-700 tabular-nums">{bd.intentTotal} / {bd.intentMax}</span>
+                                              </div>
+                                              <div className="h-1.5 bg-orange-100 rounded-full overflow-hidden">
+                                                <div className="h-full bg-orange-400 rounded-full" style={{ width: `${(bd.intentTotal / bd.intentMax) * 100}%` }} />
+                                              </div>
+                                              {bdIntentItems.length > 0 && (
+                                                <div className="mt-1.5 space-y-1 pl-1">
+                                                  {bdIntentItems.map((item, i) => (
+                                                    <div key={i} className="flex justify-between items-center text-[11px]">
+                                                      <span className="text-slate-400 capitalize">{item.label.replace(/_/g, " ")}</span>
+                                                      <span className={`font-semibold tabular-nums ${item.delta > 0 ? "text-green-600" : item.delta < 0 ? "text-red-500" : "text-slate-300"}`}>
+                                                        {item.delta > 0 ? "+" : ""}{item.delta % 1 === 0 ? item.delta.toFixed(0) : item.delta.toFixed(2)}
+                                                      </span>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                          {bd.evidenceTotal !== null && (
+                                            <div className="pt-2 border-t border-slate-100">
+                                              <div className="flex justify-between text-[11px] mb-1">
+                                                <span className="font-semibold text-teal-600 uppercase tracking-wide">Evidence</span>
+                                                <span className="font-bold text-slate-700 tabular-nums">{bd.evidenceTotal} / {bd.evidenceMax}</span>
+                                              </div>
+                                              <div className="h-1.5 bg-teal-100 rounded-full overflow-hidden">
+                                                <div className="h-full bg-teal-400 rounded-full" style={{ width: `${(bd.evidenceTotal / bd.evidenceMax) * 100}%` }} />
+                                              </div>
+                                              {bdEvidenceItems.length > 0 && (
+                                                <div className="mt-1.5 space-y-1 pl-1">
+                                                  {bdEvidenceItems.map((item, i) => (
+                                                    <div key={i} className="flex justify-between items-center text-[11px]">
+                                                      <span className="text-slate-400 capitalize">{item.label.replace(/_/g, " ")}</span>
+                                                      <span className={`font-semibold tabular-nums ${item.delta > 0 ? "text-green-600" : item.delta < 0 ? "text-red-500" : "text-slate-300"}`}>
+                                                        {item.delta > 0 ? "+" : ""}{item.delta % 1 === 0 ? item.delta.toFixed(0) : item.delta.toFixed(2)}
+                                                      </span>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                        </>
+                                      ) : null}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Lead Situation (parsed knowledge) */}
+                              <div className="space-y-2">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                                  <BookOpen className="w-3 h-3 text-indigo-500" /> Lead Situation
+                                </p>
+                                <div className="bg-indigo-50/50 rounded-xl border border-indigo-100 p-3.5 space-y-2.5">
+                                  {pk.context && (
+                                    <p className="text-xs text-slate-700 leading-relaxed">{pk.context}</p>
+                                  )}
+                                  {pk.sellerPoints.slice(0, 2).map((pt, i) => (
+                                    <div key={i} className="rounded-lg bg-white border border-indigo-100 p-2.5">
+                                      <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wide mb-1">{pt.title}</p>
+                                      <p className="text-[11px] text-slate-600 leading-relaxed line-clamp-3">{pt.body}</p>
+                                    </div>
+                                  ))}
+                                  {!pk.context && pk.sellerPoints.length === 0 && lead.knowledge && (
+                                    <p className="text-xs text-slate-600 leading-relaxed line-clamp-5">{lead.knowledge}</p>
+                                  )}
+                                  {!pk.context && pk.sellerPoints.length === 0 && !lead.knowledge && (
+                                    <p className="text-xs text-slate-400 italic">No research data available.</p>
                                   )}
                                 </div>
                               </div>
@@ -1120,60 +1461,8 @@ export default function LeadsPage() {
                               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                                 <div className="space-y-3">
                                   <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                                    <Zap className="w-3 h-3 text-orange-400" /> Evidence &amp; Score Breakdown
+                                    <Zap className="w-3 h-3 text-orange-400" /> Evidence Cards
                                   </p>
-                                  {bd && (
-                                    <div className="bg-white rounded-xl border border-gray-200 p-4">
-                                      <div className="space-y-3">
-                                        {bd.intentTotal !== null && (
-                                          <div>
-                                            <div className="flex justify-between items-center text-[11px] mb-1">
-                                              <span className="font-semibold text-orange-600 uppercase tracking-wide">Intent</span>
-                                              <span className="font-bold text-gray-700 tabular-nums">{bd.intentTotal} / {bd.intentMax}</span>
-                                            </div>
-                                            <div className="h-2 bg-orange-100 rounded-full overflow-hidden">
-                                              <div className="h-full bg-orange-400 rounded-full" style={{ width: `${(bd.intentTotal / bd.intentMax) * 100}%` }} />
-                                            </div>
-                                            {intentItems.length > 0 && (
-                                              <div className="mt-2 space-y-1 pl-1">
-                                                {intentItems.map((item, i) => (
-                                                  <div key={i} className="flex justify-between items-center text-[11px]">
-                                                    <span className="text-gray-400 capitalize">{item.label.replace(/_/g, " ")}</span>
-                                                    <span className={`font-semibold tabular-nums ${item.delta > 0 ? "text-green-600" : item.delta < 0 ? "text-red-500" : "text-gray-300"}`}>
-                                                      {item.delta > 0 ? "+" : ""}{item.delta % 1 === 0 ? item.delta.toFixed(0) : item.delta.toFixed(2)}
-                                                    </span>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
-                                        {bd.evidenceTotal !== null && (
-                                          <div className="pt-3 border-t border-gray-100">
-                                            <div className="flex justify-between items-center text-[11px] mb-1">
-                                              <span className="font-semibold text-teal-600 uppercase tracking-wide">Evidence</span>
-                                              <span className="font-bold text-gray-700 tabular-nums">{bd.evidenceTotal} / {bd.evidenceMax}</span>
-                                            </div>
-                                            <div className="h-2 bg-teal-100 rounded-full overflow-hidden">
-                                              <div className="h-full bg-teal-400 rounded-full" style={{ width: `${(bd.evidenceTotal / bd.evidenceMax) * 100}%` }} />
-                                            </div>
-                                            {evidenceItems.length > 0 && (
-                                              <div className="mt-2 space-y-1 pl-1">
-                                                {evidenceItems.map((item, i) => (
-                                                  <div key={i} className="flex justify-between items-center text-[11px]">
-                                                    <span className="text-gray-400 capitalize">{item.label.replace(/_/g, " ")}</span>
-                                                    <span className={`font-semibold tabular-nums ${item.delta > 0 ? "text-green-600" : item.delta < 0 ? "text-red-500" : "text-gray-300"}`}>
-                                                      {item.delta > 0 ? "+" : ""}{item.delta % 1 === 0 ? item.delta.toFixed(0) : item.delta.toFixed(2)}
-                                                    </span>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
                                   {lead.evidence_cards && lead.evidence_cards.length > 0 ? (
                                     lead.evidence_cards.map((card, i) => {
                                       const sig = getSignalInfo(card.signal_type);
@@ -1230,25 +1519,30 @@ export default function LeadsPage() {
                                       <p className="text-xs text-gray-700 leading-relaxed">{lead.comments}</p>
                                     </div>
                                   )}
-                                  {lead.knowledge && (
+                                  {pk.campaignContext && (
                                     <div className="bg-white rounded-xl border border-gray-200 p-4">
                                       <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1">
-                                        <Globe className="w-3 h-3" /> Research
+                                        <Brain className="w-3 h-3" /> Campaign Context
                                       </p>
-                                      <p className="text-xs text-gray-600 leading-relaxed line-clamp-6">{lead.knowledge}</p>
-                                      {lead.knowledge_sources && lead.knowledge_sources.length > 0 && (
-                                        <div className="mt-3 pt-3 border-t border-gray-100 space-y-1">
-                                          {lead.knowledge_sources.map((src, i) => (
-                                            <a key={i} href={src} target="_blank" rel="noopener noreferrer"
-                                              className="text-[11px] text-blue-500 hover:underline flex items-center gap-0.5"
-                                              onClick={(e) => e.stopPropagation()}
-                                            >
-                                              <ExternalLink className="w-3 h-3 shrink-0" />
-                                              <span className="truncate">{src}</span>
-                                            </a>
-                                          ))}
-                                        </div>
-                                      )}
+                                      <p className="text-xs text-gray-600 leading-relaxed">{pk.campaignContext}</p>
+                                    </div>
+                                  )}
+                                  {lead.knowledge_sources && lead.knowledge_sources.length > 0 && (
+                                    <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1">
+                                        <Globe className="w-3 h-3" /> Web Sources
+                                      </p>
+                                      <div className="space-y-1">
+                                        {lead.knowledge_sources.map((src, i) => (
+                                          <a key={i} href={src} target="_blank" rel="noopener noreferrer"
+                                            className="text-[11px] text-blue-500 hover:underline flex items-center gap-0.5"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <ExternalLink className="w-3 h-3 shrink-0" />
+                                            <span className="truncate">{src}</span>
+                                          </a>
+                                        ))}
+                                      </div>
                                     </div>
                                   )}
                                   <div className="bg-white rounded-xl border border-gray-200 p-4">

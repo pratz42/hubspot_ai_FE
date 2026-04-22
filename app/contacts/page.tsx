@@ -3,17 +3,9 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
 import {
-  Search,
-  Mail,
-  Phone,
-  Building2,
-  Plus,
-  Upload,
-  X,
-  ChevronDown,
-  Users,
-  Loader2,
-  ArrowUpRight,
+  Search, Mail, Phone, Building2, Plus, Upload, X, ChevronDown,
+  Users, Loader2, ArrowUpRight, Zap, Target, AlertTriangle,
+  HelpCircle, SortDesc,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +27,8 @@ interface Contact {
   owner?: string;
   created_at: string;
   company_name?: string;
+  pre_ai_score?: number | null;
+  pre_ai_reason?: string | null;
 }
 
 interface AppUser {
@@ -95,15 +89,46 @@ function getInitials(first: string, last?: string) {
   return ((first[0] ?? "") + (last?.[0] ?? "")).toUpperCase();
 }
 
+function ScoreBadge({ score }: { score?: number | null }) {
+  if (score == null) {
+    return (
+      <div className="w-11 h-11 rounded-full border-2 border-slate-200 bg-slate-50 flex items-center justify-center flex-shrink-0">
+        <span className="text-[9px] font-semibold text-slate-400">N/A</span>
+      </div>
+    );
+  }
+  const ringColor = score >= 75 ? "border-emerald-400" : score >= 50 ? "border-amber-400" : "border-red-400";
+  const bgColor = score >= 75 ? "bg-emerald-50" : score >= 50 ? "bg-amber-50" : "bg-red-50";
+  const textColor = score >= 75 ? "text-emerald-700" : score >= 50 ? "text-amber-700" : "text-red-600";
+  return (
+    <div className={`w-11 h-11 rounded-full border-[2.5px] ${ringColor} ${bgColor} flex items-center justify-center flex-shrink-0 shadow-sm`}>
+      <span className={`text-[11px] font-bold leading-none ${textColor}`}>{Math.round(score)}</span>
+    </div>
+  );
+}
+
+function getReadiness(c: Contact): { label: string; className: string } {
+  if (c.pre_ai_score == null) return { label: "Not Scored", className: "bg-slate-100 text-slate-500" };
+  if (!c.company_id) return { label: "Missing Company", className: "bg-slate-100 text-slate-600" };
+  if (!c.title && c.pre_ai_score >= 55) return { label: "Missing Persona", className: "bg-amber-100 text-amber-700" };
+  if (c.pre_ai_score >= 75) return { label: "Lead Ready", className: "bg-emerald-100 text-emerald-700" };
+  if (c.pre_ai_score >= 60) return { label: "Strong ICP Fit", className: "bg-teal-100 text-teal-700" };
+  if (c.pre_ai_score >= 45) return { label: "Needs Review", className: "bg-amber-100 text-amber-700" };
+  return { label: "Low Confidence", className: "bg-red-100 text-red-600" };
+}
+
+function compactReason(reason?: string | null): string {
+  if (!reason) return "";
+  const because = reason.indexOf("because ");
+  const trimmed = because !== -1 ? reason.slice(because + 8) : reason;
+  return trimmed.length > 80 ? trimmed.slice(0, 80) + "…" : trimmed;
+}
+
+type FilterKey = "all" | "high_priority" | "lead_ready" | "needs_review" | "missing_persona";
+
 const BLANK = {
-  first_name: "",
-  last_name: "",
-  email: "",
-  phone: "",
-  title: "",
-  source: "",
-  industry: "",
-  lifecycle_stage: "lead",
+  first_name: "", last_name: "", email: "", phone: "", title: "",
+  source: "", industry: "", lifecycle_stage: "lead",
 };
 
 const PER_PAGE = 25;
@@ -114,25 +139,20 @@ export default function ContactsPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [form, setForm] = useState({ ...BLANK });
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
-
-  // CSV import
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importResult, setImportResult] = useState<{ created: number; updated: number; failed: number } | null>(null);
   const [importing, setImporting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-
-  // Company data for display + form search
   const [companyMap, setCompanyMap] = useState<Record<number, string>>({});
   const [companiesList, setCompaniesList] = useState<{ id: number; name: string; industry?: string }[]>([]);
   const [formCompanySearch, setFormCompanySearch] = useState("");
   const [formCompanyId, setFormCompanyId] = useState<number | null>(null);
-
-  // Owner dropdown
   const [formOwner, setFormOwner] = useState("");
   const [users, setUsers] = useState<AppUser[]>([]);
 
@@ -169,19 +189,23 @@ export default function ContactsPage() {
   }
 
   useEffect(() => { fetchContacts(1); fetchCompanies(); fetchUsers(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Re-fetch when search changes (debounced) or page changes
   useEffect(() => {
     const t = setTimeout(() => { setPage(1); fetchContacts(1); }, 350);
     return () => clearTimeout(t);
   }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
-
   useEffect(() => { fetchContacts(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const counts = useMemo(() => ({
+    all: contacts.length,
+    high_priority: contacts.filter((c) => (c.pre_ai_score ?? 0) >= 75).length,
+    lead_ready: contacts.filter((c) => (c.pre_ai_score ?? 0) >= 60).length,
+    needs_review: contacts.filter((c) => c.pre_ai_score != null && (c.pre_ai_score ?? 0) < 50).length,
+    missing_persona: contacts.filter((c) => !c.title).length,
+  }), [contacts]);
+
   const filtered = useMemo(() => {
-    // Server already filters by search — just return all contacts from current page
     const q = search.toLowerCase();
-    return contacts.filter(
+    let result = contacts.filter(
       (c) =>
         !q ||
         c.first_name.toLowerCase().includes(q) ||
@@ -190,7 +214,12 @@ export default function ContactsPage() {
         c.title?.toLowerCase().includes(q) ||
         (c.company_id ? companyMap[c.company_id]?.toLowerCase().includes(q) : false)
     );
-  }, [contacts, search, companyMap]);
+    if (activeFilter === "high_priority") result = result.filter((c) => (c.pre_ai_score ?? 0) >= 75);
+    else if (activeFilter === "lead_ready") result = result.filter((c) => (c.pre_ai_score ?? 0) >= 60);
+    else if (activeFilter === "needs_review") result = result.filter((c) => c.pre_ai_score != null && (c.pre_ai_score ?? 0) < 50);
+    else if (activeFilter === "missing_persona") result = result.filter((c) => !c.title);
+    return [...result].sort((a, b) => (b.pre_ai_score ?? -1) - (a.pre_ai_score ?? -1));
+  }, [contacts, search, companyMap, activeFilter]);
 
   const formCompanyResults = useMemo(() => {
     if (!formCompanySearch) return [];
@@ -259,27 +288,32 @@ export default function ContactsPage() {
     }
   }
 
-  const statCards = [
-    { label: "Total Contacts", value: contacts.length, color: "from-indigo-600 to-indigo-700", iconBg: "bg-indigo-500" },
-    { label: "With Email", value: contacts.filter((c) => c.email).length, color: "from-emerald-600 to-emerald-700", iconBg: "bg-emerald-500" },
-    { label: "Customers", value: contacts.filter((c) => c.lifecycle_stage === "customer").length, color: "from-orange-500 to-orange-600", iconBg: "bg-orange-400" },
-    { label: "With Phone", value: contacts.filter((c) => c.phone).length, color: "from-violet-600 to-violet-700", iconBg: "bg-violet-500" },
+  const FILTER_CARDS: {
+    key: FilterKey; label: string; icon: React.ElementType; count: number; sub: string;
+    iconBg: string; iconColor: string; activeBg: string;
+  }[] = [
+    { key: "all", label: "All Contacts", icon: Users, count: total, sub: "total", iconBg: "bg-slate-100", iconColor: "text-slate-500", activeBg: "bg-slate-800" },
+    { key: "high_priority", label: "High Priority", icon: Zap, count: counts.high_priority, sub: "score ≥ 75", iconBg: "bg-emerald-100", iconColor: "text-emerald-600", activeBg: "bg-emerald-600" },
+    { key: "lead_ready", label: "Lead Ready", icon: Target, count: counts.lead_ready, sub: "score ≥ 60", iconBg: "bg-blue-100", iconColor: "text-blue-600", activeBg: "bg-blue-600" },
+    { key: "needs_review", label: "Needs Review", icon: AlertTriangle, count: counts.needs_review, sub: "score < 50", iconBg: "bg-amber-100", iconColor: "text-amber-600", activeBg: "bg-amber-500" },
+    { key: "missing_persona", label: "Missing Persona", icon: HelpCircle, count: counts.missing_persona, sub: "no job title", iconBg: "bg-rose-100", iconColor: "text-rose-500", activeBg: "bg-rose-500" },
   ];
 
-  if (loading) {
+  if (loading && contacts.length === 0) {
     return (
       <div className="p-6 space-y-5">
         <div className="h-7 bg-slate-200 rounded-lg w-32 animate-pulse" />
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => <div key={i} className="h-24 bg-slate-200 rounded-xl animate-pulse" />)}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          {[...Array(5)].map((_, i) => <div key={i} className="h-20 bg-slate-200 rounded-xl animate-pulse" />)}
         </div>
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           {[...Array(6)].map((_, i) => (
             <div key={i} className="flex items-center gap-4 px-5 py-4 border-b border-slate-100 animate-pulse">
+              <div className="w-11 h-11 rounded-full bg-slate-200 flex-shrink-0" />
               <div className="w-9 h-9 rounded-full bg-slate-200 flex-shrink-0" />
               <div className="flex-1 space-y-2">
-                <div className="h-3.5 bg-slate-200 rounded w-32" />
-                <div className="h-3 bg-slate-100 rounded w-48" />
+                <div className="h-3.5 bg-slate-200 rounded w-36" />
+                <div className="h-3 bg-slate-100 rounded w-52" />
               </div>
             </div>
           ))}
@@ -294,7 +328,7 @@ export default function ContactsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">Contacts</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{contacts.length} contacts</p>
+          <p className="text-sm text-slate-500 mt-0.5">{total} contacts · sorted by AI priority</p>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -306,34 +340,44 @@ export default function ContactsPage() {
             <Upload className="w-3.5 h-3.5 mr-1.5" />
             Import CSV
           </Button>
-          <Button
-            size="sm"
-            className="bg-orange-600 hover:bg-orange-700 h-8 text-xs font-semibold"
-            onClick={openDrawer}
-          >
+          <Button size="sm" className="bg-orange-600 hover:bg-orange-700 h-8 text-xs font-semibold" onClick={openDrawer}>
             <Plus className="w-3.5 h-3.5 mr-1" />
             Add Contact
           </Button>
         </div>
       </div>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map((card) => (
-          <div key={card.label} className={`relative overflow-hidden rounded-xl bg-gradient-to-br ${card.color} p-5 shadow-md`}>
-            <div className="absolute -top-4 -right-4 w-20 h-20 rounded-full bg-white/10" />
-            <div className="relative">
-              <div className={`inline-flex p-2 rounded-lg ${card.iconBg} mb-3`}>
-                <Users className="h-4 w-4 text-white" />
+      {/* Intelligence Summary Strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        {FILTER_CARDS.map((card) => {
+          const isActive = activeFilter === card.key;
+          const Icon = card.icon;
+          return (
+            <button
+              key={card.key}
+              onClick={() => setActiveFilter(card.key)}
+              className={`text-left rounded-xl border p-3.5 transition-all focus:outline-none ${
+                isActive
+                  ? `${card.activeBg} border-transparent shadow-md`
+                  : "bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm"
+              }`}
+            >
+              <div className="flex items-start justify-between mb-2">
+                <div className={`inline-flex p-1.5 rounded-lg ${isActive ? "bg-white/20" : card.iconBg}`}>
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? "text-white" : card.iconColor}`} />
+                </div>
+                <span className={`text-2xl font-bold leading-none ${isActive ? "text-white" : "text-slate-900"}`}>
+                  {card.count}
+                </span>
               </div>
-              <div className="text-2xl font-bold text-white">{card.value}</div>
-              <p className="text-xs font-semibold text-white/60 uppercase tracking-wider mt-0.5">{card.label}</p>
-            </div>
-          </div>
-        ))}
+              <p className={`text-xs font-semibold ${isActive ? "text-white" : "text-slate-700"}`}>{card.label}</p>
+              <p className={`text-[10px] mt-0.5 ${isActive ? "text-white/70" : "text-slate-400"}`}>{card.sub}</p>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Search */}
+      {/* Search + result count */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -344,106 +388,166 @@ export default function ContactsPage() {
             className="pl-9 bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 h-9"
           />
         </div>
-        <span className="text-xs text-slate-400 font-medium">{filtered.length} result{filtered.length !== 1 ? "s" : ""}</span>
+        <div className="flex items-center gap-1.5 text-xs text-slate-400">
+          <SortDesc className="w-3.5 h-3.5" />
+          <span>Score high → low</span>
+        </div>
+        <span className="text-xs text-slate-400 font-medium ml-auto">{filtered.length} result{filtered.length !== 1 ? "s" : ""}</span>
       </div>
 
-      {/* Table */}
+      {/* Contact Intelligence List */}
       {filtered.length === 0 ? (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center py-16 text-center">
           <div className="w-14 h-14 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mb-4">
             <Users className="w-6 h-6 text-slate-400" />
           </div>
           <h3 className="text-sm font-semibold text-slate-700 mb-1">No contacts found</h3>
-          <p className="text-slate-400 text-xs mb-5">Import a CSV or add your first contact.</p>
-          <Button size="sm" className="bg-orange-600 hover:bg-orange-700 h-8 text-xs font-semibold" onClick={openDrawer}>
-            <Plus className="w-3.5 h-3.5 mr-1" />
-            Add Contact
-          </Button>
+          <p className="text-slate-400 text-xs mb-5">
+            {activeFilter !== "all" ? "Try clearing the filter or import contacts." : "Import a CSV or add your first contact."}
+          </p>
+          {activeFilter !== "all" ? (
+            <Button size="sm" variant="outline" className="h-8 text-xs font-semibold" onClick={() => setActiveFilter("all")}>
+              Clear filter
+            </Button>
+          ) : (
+            <Button size="sm" className="bg-orange-600 hover:bg-orange-700 h-8 text-xs font-semibold" onClick={openDrawer}>
+              <Plus className="w-3.5 h-3.5 mr-1" />Add Contact
+            </Button>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50">
-                {["Contact", "Title", "Company", "Industry", "Lifecycle", "Owner", "Reach", ""].map((h) => (
-                  <th key={h} className="text-left py-3 px-5 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((contact) => {
-                const fullName = `${contact.first_name} ${contact.last_name ?? ""}`.trim();
-                const grad = avatarGradient(fullName);
-                const lcColor = LIFECYCLE_COLORS[contact.lifecycle_stage ?? "other"] ?? "bg-slate-100 text-slate-600";
-                const lcLabel = LIFECYCLE_LABELS[contact.lifecycle_stage ?? "other"] ?? contact.lifecycle_stage ?? "—";
-                const companyName = contact.company_id ? companyMap[contact.company_id] : undefined;
-                return (
-                  <tr key={contact.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="py-3.5 px-5">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${grad} flex items-center justify-center text-xs font-bold text-white flex-shrink-0`}>
-                          {getInitials(contact.first_name, contact.last_name)}
-                        </div>
-                        <div>
-                          <Link href={`/contacts/${contact.id}`} className="font-semibold text-slate-900 text-sm hover:text-orange-600 transition-colors">{fullName}</Link>
-                          <p className="text-xs text-slate-400">{contact.email}</p>
-                        </div>
+          {/* Column headers */}
+          <div className="flex items-center gap-4 px-5 py-2.5 border-b border-slate-200 bg-slate-50">
+            <div className="w-11 flex-shrink-0" />
+            <div className="w-9 flex-shrink-0" />
+            <div className="flex-1 min-w-0 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Contact</div>
+            <div className="hidden lg:block w-40 flex-shrink-0 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Company</div>
+            <div className="hidden xl:block w-28 flex-shrink-0 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Industry</div>
+            <div className="w-36 flex-shrink-0 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stage / Readiness</div>
+            <div className="hidden md:block w-28 flex-shrink-0 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Owner</div>
+            <div className="w-20 flex-shrink-0" />
+          </div>
+
+          {filtered.map((contact) => {
+            const fullName = `${contact.first_name} ${contact.last_name ?? ""}`.trim();
+            const grad = avatarGradient(fullName);
+            const lcColor = LIFECYCLE_COLORS[contact.lifecycle_stage ?? "other"] ?? "bg-slate-100 text-slate-600";
+            const lcLabel = LIFECYCLE_LABELS[contact.lifecycle_stage ?? "other"] ?? contact.lifecycle_stage ?? "—";
+            const companyName = contact.company_id ? companyMap[contact.company_id] : undefined;
+            const readiness = getReadiness(contact);
+            const aiHint = compactReason(contact.pre_ai_reason);
+
+            return (
+              <div
+                key={contact.id}
+                className="group flex items-center gap-4 px-5 py-3.5 border-b border-slate-100 last:border-0 hover:bg-slate-50/70 transition-colors"
+              >
+                {/* Score Badge */}
+                <ScoreBadge score={contact.pre_ai_score} />
+
+                {/* Avatar */}
+                <div className={`w-9 h-9 rounded-full bg-gradient-to-br ${grad} flex items-center justify-center text-xs font-bold text-white flex-shrink-0 shadow-sm`}>
+                  {getInitials(contact.first_name, contact.last_name)}
+                </div>
+
+                {/* Contact info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Link
+                      href={`/contacts/${contact.id}`}
+                      className="font-semibold text-slate-900 text-sm hover:text-orange-600 transition-colors"
+                    >
+                      {fullName}
+                    </Link>
+                    {contact.title && (
+                      <span className="text-xs text-slate-400 truncate max-w-[120px]">{contact.title}</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5 truncate">{contact.email}</p>
+                  {aiHint && (
+                    <p className="text-[11px] text-slate-400 italic mt-0.5 truncate">{aiHint}</p>
+                  )}
+                </div>
+
+                {/* Company */}
+                <div className="hidden lg:block w-40 flex-shrink-0">
+                  {companyName && contact.company_id ? (
+                    <Link href={`/companies/${contact.company_id}`} className="flex items-center gap-1.5 hover:text-orange-600 transition-colors group/co">
+                      <div className={`w-6 h-6 rounded-md bg-gradient-to-br ${avatarGradient(companyName)} flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0`}>
+                        {companyName.slice(0, 1).toUpperCase()}
                       </div>
-                    </td>
-                    <td className="py-3.5 px-5 text-sm text-slate-600">
-                      {contact.title ?? <span className="text-slate-300">—</span>}
-                    </td>
-                    <td className="py-3.5 px-5">
-                      {companyName && contact.company_id ? (
-                        <Link href={`/companies/${contact.company_id}`} className="flex items-center gap-1.5 text-sm text-slate-700 hover:text-orange-600 transition-colors">
-                          <Building2 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                          <span className="font-medium">{companyName}</span>
-                        </Link>
-                      ) : <span className="text-slate-300 text-xs">—</span>}
-                    </td>
-                    <td className="py-3.5 px-5">
-                      {contact.industry ? (
-                        <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
-                          {contact.industry}
-                        </span>
-                      ) : <span className="text-slate-300 text-xs">—</span>}
-                    </td>
-                    <td className="py-3.5 px-5">
-                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${lcColor}`}>
-                        {lcLabel}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-5 text-xs text-slate-500">
-                      {contact.owner ? (
-                        <span className="truncate max-w-[120px] block">{contact.owner}</span>
-                      ) : <span className="text-slate-300">—</span>}
-                    </td>
-                    <td className="py-3.5 px-5">
-                      <div className="flex items-center gap-2">
-                        {contact.email && (
-                          <a href={`mailto:${contact.email}`} className="text-slate-400 hover:text-indigo-600 transition-colors" onClick={(e) => e.stopPropagation()}>
-                            <Mail className="w-3.5 h-3.5" />
-                          </a>
-                        )}
-                        {contact.phone && (
-                          <a href={`tel:${contact.phone}`} className="text-slate-400 hover:text-emerald-600 transition-colors" onClick={(e) => e.stopPropagation()}>
-                            <Phone className="w-3.5 h-3.5" />
-                          </a>
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-3.5 px-5">
-                      <a href={`/leads?contact_id=${contact.id}`} className="p-1.5 rounded-lg hover:bg-orange-50 text-slate-400 hover:text-orange-600 transition-colors inline-flex">
-                        <ArrowUpRight className="w-3.5 h-3.5" />
-                      </a>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      <span className="text-xs font-medium text-slate-700 group-hover/co:text-orange-600 truncate transition-colors">{companyName}</span>
+                    </Link>
+                  ) : (
+                    <span className="text-xs text-slate-300">No company</span>
+                  )}
+                </div>
+
+                {/* Industry */}
+                <div className="hidden xl:block w-28 flex-shrink-0">
+                  {contact.industry ? (
+                    <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 truncate max-w-[108px]">
+                      {contact.industry}
+                    </span>
+                  ) : (
+                    <span className="text-slate-300 text-xs">—</span>
+                  )}
+                </div>
+
+                {/* Stage + Readiness */}
+                <div className="w-36 flex-shrink-0 space-y-1">
+                  <span className={`inline-flex px-1.5 py-0.5 rounded-md text-[10px] font-semibold ${lcColor}`}>
+                    {lcLabel}
+                  </span>
+                  <br />
+                  <span className={`inline-flex px-1.5 py-0.5 rounded-md text-[10px] font-semibold ${readiness.className}`}>
+                    {readiness.label}
+                  </span>
+                </div>
+
+                {/* Owner */}
+                <div className="hidden md:block w-28 flex-shrink-0">
+                  {contact.owner ? (
+                    <span className="text-xs text-slate-500 truncate block">{contact.owner.split("@")[0]}</span>
+                  ) : (
+                    <span className="text-slate-300 text-xs">Unassigned</span>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="w-20 flex-shrink-0 flex items-center justify-end gap-1">
+                  {contact.email && (
+                    <a
+                      href={`mailto:${contact.email}`}
+                      className="p-1.5 rounded-lg hover:bg-indigo-50 text-slate-300 hover:text-indigo-500 transition-colors"
+                      onClick={(e) => e.stopPropagation()}
+                      title="Send email"
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                  {contact.phone && (
+                    <a
+                      href={`tel:${contact.phone}`}
+                      className="p-1.5 rounded-lg hover:bg-emerald-50 text-slate-300 hover:text-emerald-500 transition-colors"
+                      onClick={(e) => e.stopPropagation()}
+                      title="Call"
+                    >
+                      <Phone className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                  <Link
+                    href={`/contacts/${contact.id}`}
+                    className="p-1.5 rounded-lg hover:bg-orange-50 text-slate-300 hover:text-orange-500 transition-colors"
+                    title="View contact"
+                  >
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -505,8 +609,6 @@ export default function ContactsPage() {
                 <label className="text-xs font-semibold text-slate-700 mb-1 block">Source *</label>
                 <Input value={form.source ?? ""} onChange={(e) => setForm({ ...form, source: e.target.value })} className="h-9 text-sm" placeholder="LinkedIn, referral…" />
               </div>
-
-              {/* Lifecycle Stage */}
               <div>
                 <label className="text-xs font-semibold text-slate-700 mb-1 block">Lifecycle Stage</label>
                 <div className="relative">
@@ -522,8 +624,6 @@ export default function ContactsPage() {
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                 </div>
               </div>
-
-              {/* Company (mandatory) */}
               <div>
                 <label className="text-xs font-semibold text-slate-700 mb-1 block">Company *</label>
                 {formCompanyId !== null ? (
@@ -564,8 +664,6 @@ export default function ContactsPage() {
                   </div>
                 )}
               </div>
-
-              {/* Contact Owner (non-mandatory) */}
               {users.length > 0 && (
                 <div>
                   <label className="text-xs font-semibold text-slate-700 mb-1 block">Contact Owner</label>
@@ -584,7 +682,6 @@ export default function ContactsPage() {
                   </div>
                 </div>
               )}
-
               <div className="pt-2">
                 <Button type="submit" disabled={saving} className="w-full bg-orange-600 hover:bg-orange-700 h-9 text-sm font-semibold">
                   {saving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving…</> : "Add Contact"}
