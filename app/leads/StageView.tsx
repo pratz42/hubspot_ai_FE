@@ -272,12 +272,10 @@ function LeadRowCard({ lead, onEdit, onConvertToDeal }: LeadRowCardProps) {
   const structComps = sb?.components ?? sb?.score_breakdown?.components ?? [];
   const hasStructured = structComps.length > 0;
   const bd = hasStructured ? null : parseScoreBreakdown(lead.score_comment);
-  const intentItems = hasStructured
-    ? structComps.filter((c) => c.label.startsWith("intent:"))
-    : (bd?.items.filter((x) => x.category === "intent") ?? []);
-  const evidenceItems = hasStructured
-    ? structComps.filter((c) => c.label.startsWith("evidence:"))
-    : (bd?.items.filter((x) => x.category === "evidence") ?? []);
+  const intentItems = structComps.filter((c) => c.label.startsWith("intent:"));
+  const evidenceItems = structComps.filter((c) => c.label.startsWith("evidence:"));
+  const bdIntentItems = !hasStructured ? (bd?.items.filter((x) => x.category === "intent") ?? []) : [];
+  const bdEvidenceItems = !hasStructured ? (bd?.items.filter((x) => x.category === "evidence") ?? []) : [];
 
   return (
     <div
