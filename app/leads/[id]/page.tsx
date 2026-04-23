@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,11 +11,13 @@ import {
   MessageSquare, FileText, Activity, BarChart3, Sparkles, Building,
   Loader2, Plus, PhoneCall, Users, StickyNote, XCircle, TrendingUp,
   TrendingDown, Minus, BookOpen, Lightbulb, Package, Star, ChevronDown,
-  ChevronUp,
+  ChevronUp, Clock, RotateCcw,
 } from "lucide-react";
 import API from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import { getPipelineStage } from "@/lib/pipeline";
+import { useScoreStream } from "@/hooks/useScoreStream";
+import { ScoreStatusBadge } from "@/components/ui/ScoreStatusBadge";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -151,6 +153,8 @@ interface Lead {
   created_at: string;
   contact_id?: number;
   company_id_assoc?: number;
+  scoring_status?: string;
+  scoring_version?: number;
 }
 
 /* ── Knowledge parser ───────────────────────────────────────────────── */
@@ -351,6 +355,15 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
   const [addingComm, setAddingComm] = useState(false);
   const [commError, setCommError] = useState("");
   const [bdOpen, setBdOpen] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+
+  const reloadLead = useCallback(async () => {
+    if (!leadId) return;
+    try {
+      const res = await API.get(`/leads/${leadId}`);
+      setLead(res.data);
+    } catch { /* ignore silent refresh */ }
+  }, [leadId]);
 
   useEffect(() => {
     if (!leadId) return;
@@ -362,6 +375,26 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
       .then((res) => setComms(Array.isArray(res.data) ? res.data : []))
       .catch(() => {});
   }, [leadId]);
+
+  const { liveStatus, isStreaming } = useScoreStream({
+    entityType: "lead",
+    entityId: lead?.id ?? null,
+    initialStatus: lead?.scoring_status ?? "scored",
+    onComplete: reloadLead,
+  });
+
+  const effectiveStatus = liveStatus ?? lead?.scoring_status ?? "scored";
+
+  async function handleRetry() {
+    if (!leadId || retrying) return;
+    setRetrying(true);
+    try {
+      await API.post(`/ai-jobs/leads/${leadId}/retry`);
+      await reloadLead();
+    } catch { /* ignore */ } finally {
+      setRetrying(false);
+    }
+  }
 
   const logCommunication = async () => {
     if (!leadId || !commContent.trim()) return;
@@ -465,7 +498,8 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusConfig.badge}`}>
                   {statusConfig.label}
                 </span>
-                {lead.ai_score !== undefined && (
+                <ScoreStatusBadge status={effectiveStatus} size="md" />
+                {effectiveStatus === "scored" && lead.ai_score !== undefined && (
                   <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${scoreConfig.bg} ${scoreConfig.color}`}>
                     <Brain className="w-3 h-3" />{scoreConfig.label} · {lead.ai_score}/100
                   </span>
@@ -815,7 +849,70 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                   </div>
                 )}
 
-                {!lead.ai_score && !lead.score_comment && !lead.sales_strategy && (
+                {effectiveStatus === "pending" && (
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 flex items-center gap-5">
+                    <div className="w-16 h-16 rounded-full border-[3px] border-slate-200 bg-slate-50 flex items-center justify-center flex-shrink-0 animate-pulse">
+                      <Clock className="w-6 h-6 text-slate-300" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-600">AI scoring queued</p>
+                      <p className="text-xs text-slate-400 mt-1">Your lead is waiting in the AI scoring queue. Results arrive in seconds.</p>
+                      {isStreaming && <p className="text-[10px] text-blue-500 font-medium mt-2 flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping inline-block" />Connected — waiting for worker</p>}
+                    </div>
+                  </div>
+                )}
+                {effectiveStatus === "scoring" && (
+                  <div className="bg-white rounded-xl border border-blue-100 shadow-sm p-8">
+                    <div className="flex items-center gap-5 mb-6">
+                      <div className="w-16 h-16 rounded-full border-[3px] border-blue-300 bg-blue-50 flex items-center justify-center flex-shrink-0">
+                        <Brain className="w-6 h-6 text-blue-500 animate-pulse" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-blue-700">Deep AI analysis in progress…</p>
+                        <p className="text-xs text-slate-400 mt-1">Running Gemini + Pinecone pipeline on {lead.name}. This takes 10–30 seconds.</p>
+                        <p className="text-[10px] text-blue-500 font-medium mt-2 flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping inline-block" />Live update when complete</p>
+                      </div>
+                    </div>
+                    <div className="space-y-4 animate-pulse">
+                      {["Intent Signals", "Evidence Score", "ICP Alignment", "Sales Strategy"].map((label) => (
+                        <div key={label} className="space-y-2">
+                          <div className="flex justify-between">
+                            <div className="h-3 bg-slate-200 rounded w-32" />
+                            <div className="h-3 bg-slate-200 rounded w-12" />
+                          </div>
+                          <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-200 rounded-full w-3/4" />
+                          </div>
+                          <div className="h-2.5 bg-slate-100 rounded w-5/6" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {effectiveStatus === "failed" && (
+                  <div className="bg-white rounded-xl border border-red-100 shadow-sm p-8 flex items-start gap-5">
+                    <div className="w-14 h-14 rounded-full bg-red-50 border-2 border-red-200 flex items-center justify-center flex-shrink-0">
+                      <XCircle className="w-6 h-6 text-red-500" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-red-700">AI scoring failed</p>
+                      <p className="text-xs text-slate-400 mt-1">The AI engine encountered an error. You can retry the analysis below.</p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="mt-4 h-8 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300"
+                        onClick={handleRetry}
+                        disabled={retrying}
+                      >
+                        {retrying
+                          ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Retrying…</>
+                          : <><RotateCcw className="w-3.5 h-3.5 mr-1.5" />Retry AI analysis</>
+                        }
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {effectiveStatus === "scored" && !lead.ai_score && !lead.score_comment && !lead.sales_strategy && (
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center py-14">
                     <Brain className="w-10 h-10 text-slate-200 mb-3" />
                     <p className="text-sm text-slate-500">No AI analysis available for this lead yet.</p>
@@ -1115,6 +1212,48 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
               </a>
             </div>
           </div>
+
+          {/* Scoring state sidebar panel */}
+          {(effectiveStatus === "pending" || effectiveStatus === "scoring" || effectiveStatus === "failed") && (
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 mb-4">
+                <Brain className="w-3.5 h-3.5 text-slate-400" />AI Status
+              </h3>
+              {effectiveStatus === "pending" && (
+                <div className="text-center py-4">
+                  <Clock className="w-8 h-8 text-slate-200 mx-auto mb-2 animate-pulse" />
+                  <p className="text-xs font-semibold text-slate-500">In queue</p>
+                  <p className="text-[10px] text-slate-400 mt-1">Waiting for worker</p>
+                </div>
+              )}
+              {effectiveStatus === "scoring" && (
+                <div className="text-center py-4">
+                  <Brain className="w-8 h-8 text-blue-300 mx-auto mb-2 animate-pulse" />
+                  <p className="text-xs font-semibold text-blue-600">Analyzing…</p>
+                  <p className="text-[10px] text-slate-400 mt-1">Running full AI pipeline</p>
+                  <div className="mt-3 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-blue-300 rounded-full animate-pulse w-2/3" />
+                  </div>
+                </div>
+              )}
+              {effectiveStatus === "failed" && (
+                <div className="text-center py-2">
+                  <XCircle className="w-8 h-8 text-red-300 mx-auto mb-2" />
+                  <p className="text-xs font-semibold text-red-600">Scoring failed</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-3 h-7 text-[10px] border-red-200 text-red-600 hover:bg-red-50"
+                    onClick={handleRetry}
+                    disabled={retrying}
+                  >
+                    {retrying ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RotateCcw className="w-3 h-3 mr-1" />}
+                    Retry
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Score Intelligence Sidebar */}
           {lead.ai_score !== undefined && (

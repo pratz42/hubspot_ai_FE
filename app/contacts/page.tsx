@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Search, Mail, Phone, Building2, Plus, Upload, X, ChevronDown,
   Users, Loader2, ArrowUpRight, Zap, Target, AlertTriangle,
-  HelpCircle, SortDesc,
+  HelpCircle, SortDesc, Brain, Clock, XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +29,7 @@ interface Contact {
   company_name?: string;
   pre_ai_score?: number | null;
   pre_ai_reason?: string | null;
+  scoring_status?: string;
 }
 
 interface AppUser {
@@ -89,7 +90,28 @@ function getInitials(first: string, last?: string) {
   return ((first[0] ?? "") + (last?.[0] ?? "")).toUpperCase();
 }
 
-function ScoreBadge({ score }: { score?: number | null }) {
+function ScoreBadge({ score, scoringStatus }: { score?: number | null; scoringStatus?: string }) {
+  if (scoringStatus === "pending") {
+    return (
+      <div className="w-11 h-11 rounded-full border-2 border-slate-200 bg-slate-50 flex items-center justify-center flex-shrink-0 animate-pulse">
+        <Clock className="w-3.5 h-3.5 text-slate-300" />
+      </div>
+    );
+  }
+  if (scoringStatus === "scoring") {
+    return (
+      <div className="w-11 h-11 rounded-full border-2 border-blue-300 bg-blue-50 flex items-center justify-center flex-shrink-0">
+        <Brain className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
+      </div>
+    );
+  }
+  if (scoringStatus === "failed") {
+    return (
+      <div className="w-11 h-11 rounded-full border-2 border-red-200 bg-red-50 flex items-center justify-center flex-shrink-0">
+        <XCircle className="w-3.5 h-3.5 text-red-400" />
+      </div>
+    );
+  }
   if (score == null) {
     return (
       <div className="w-11 h-11 rounded-full border-2 border-slate-200 bg-slate-50 flex items-center justify-center flex-shrink-0">
@@ -108,6 +130,9 @@ function ScoreBadge({ score }: { score?: number | null }) {
 }
 
 function getReadiness(c: Contact): { label: string; className: string } {
+  if (c.scoring_status === "pending") return { label: "Queued", className: "bg-slate-100 text-slate-500" };
+  if (c.scoring_status === "scoring") return { label: "Scoring…", className: "bg-blue-50 text-blue-600" };
+  if (c.scoring_status === "failed") return { label: "Failed", className: "bg-red-100 text-red-600" };
   if (c.pre_ai_score == null) return { label: "Not Scored", className: "bg-slate-100 text-slate-500" };
   if (!c.company_id) return { label: "Missing Company", className: "bg-slate-100 text-slate-600" };
   if (!c.title && c.pre_ai_score >= 55) return { label: "Missing Persona", className: "bg-amber-100 text-amber-700" };
@@ -149,6 +174,8 @@ export default function ContactsPage() {
   const [importResult, setImportResult] = useState<{ created: number; updated: number; failed: number } | null>(null);
   const [importing, setImporting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const pageRef = useRef(page);
+  const searchRef = useRef(search);
   const [companyMap, setCompanyMap] = useState<Record<number, string>>({});
   const [companiesList, setCompaniesList] = useState<{ id: number; name: string; industry?: string }[]>([]);
   const [formCompanySearch, setFormCompanySearch] = useState("");
@@ -194,6 +221,29 @@ export default function ContactsPage() {
     return () => clearTimeout(t);
   }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { fetchContacts(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep refs current so the polling interval always reads the latest page/search.
+  useEffect(() => { pageRef.current = page; }, [page]);
+  useEffect(() => { searchRef.current = search; }, [search]);
+
+  // Poll silently while any contact is still being scored.
+  const hasActiveScoringContacts = contacts.some(
+    (c) => c.scoring_status === "pending" || c.scoring_status === "scoring"
+  );
+  useEffect(() => {
+    if (!hasActiveScoringContacts) return;
+    const id = setInterval(async () => {
+      try {
+        const res = await API.get("/contacts", {
+          params: { page: pageRef.current, per_page: PER_PAGE, search: searchRef.current || undefined },
+        });
+        const data: Contact[] = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
+        setContacts(data);
+        setTotal(res.data?.total ?? data.length);
+      } catch { /* ignore */ }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [hasActiveScoringContacts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const counts = useMemo(() => ({
     all: contacts.length,
@@ -444,7 +494,7 @@ export default function ContactsPage() {
                 className="group flex items-center gap-4 px-5 py-3.5 border-b border-slate-100 last:border-0 hover:bg-slate-50/70 transition-colors"
               >
                 {/* Score Badge */}
-                <ScoreBadge score={contact.pre_ai_score} />
+                <ScoreBadge score={contact.pre_ai_score} scoringStatus={contact.scoring_status} />
 
                 {/* Avatar */}
                 <div className={`w-9 h-9 rounded-full bg-gradient-to-br ${grad} flex items-center justify-center text-xs font-bold text-white flex-shrink-0 shadow-sm`}>
@@ -591,40 +641,6 @@ export default function ContactsPage() {
                 <Input value={form.title ?? ""} onChange={(e) => setForm({ ...form, title: e.target.value })} className="h-9 text-sm" placeholder="VP Sales" />
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-700 mb-1 block">
-                  Industry
-                  {formCompanyId !== null && form.industry && (
-                    <span className="ml-1 text-[10px] text-orange-500 normal-case font-normal">(from company)</span>
-                  )}
-                </label>
-                <Input
-                  value={form.industry ?? ""}
-                  onChange={(e) => setForm({ ...form, industry: e.target.value })}
-                  readOnly={formCompanyId !== null}
-                  className={`h-9 text-sm ${formCompanyId !== null ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
-                  placeholder="Technology, Logistics…"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-700 mb-1 block">Source *</label>
-                <Input value={form.source ?? ""} onChange={(e) => setForm({ ...form, source: e.target.value })} className="h-9 text-sm" placeholder="LinkedIn, referral…" />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-700 mb-1 block">Lifecycle Stage</label>
-                <div className="relative">
-                  <select
-                    value={form.lifecycle_stage ?? "lead"}
-                    onChange={(e) => setForm({ ...form, lifecycle_stage: e.target.value })}
-                    className="w-full h-9 border border-slate-200 rounded-lg px-3 text-sm text-slate-900 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-orange-500"
-                  >
-                    {LIFECYCLE_OPTIONS.map(({ value, label }) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-                </div>
-              </div>
-              <div>
                 <label className="text-xs font-semibold text-slate-700 mb-1 block">Company *</label>
                 {formCompanyId !== null ? (
                   <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
@@ -651,7 +667,7 @@ export default function ContactsPage() {
                             onClick={() => {
                               setFormCompanyId(c.id);
                               setFormCompanySearch("");
-                              if (c.industry) setForm((prev) => ({ ...prev, industry: c.industry! }));
+                              setForm((prev) => ({ ...prev, industry: c.industry ?? prev.industry }));
                             }}
                             className="w-full px-3 py-2.5 text-left hover:bg-orange-50 border-b border-slate-100 last:border-0 transition-colors"
                           >
@@ -663,6 +679,40 @@ export default function ContactsPage() {
                     )}
                   </div>
                 )}
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 mb-1 block">
+                  Industry
+                  {formCompanyId !== null && (
+                    <span className="ml-1 text-[10px] text-orange-500 normal-case font-normal">(from company)</span>
+                  )}
+                </label>
+                <Input
+                  value={form.industry ?? ""}
+                  onChange={(e) => setForm({ ...form, industry: e.target.value })}
+                  readOnly={formCompanyId !== null}
+                  className={`h-9 text-sm ${formCompanyId !== null ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
+                  placeholder={formCompanyId !== null ? "Set by company" : "Technology, Logistics…"}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 mb-1 block">Source *</label>
+                <Input value={form.source ?? ""} onChange={(e) => setForm({ ...form, source: e.target.value })} className="h-9 text-sm" placeholder="LinkedIn, referral…" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-700 mb-1 block">Lifecycle Stage</label>
+                <div className="relative">
+                  <select
+                    value={form.lifecycle_stage ?? "lead"}
+                    onChange={(e) => setForm({ ...form, lifecycle_stage: e.target.value })}
+                    className="w-full h-9 border border-slate-200 rounded-lg px-3 text-sm text-slate-900 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    {LIFECYCLE_OPTIONS.map(({ value, label }) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                </div>
               </div>
               {users.length > 0 && (
                 <div>
