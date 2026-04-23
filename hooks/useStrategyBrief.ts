@@ -143,17 +143,55 @@ export function useStrategyBrief(leadId: number | null) {
             }
           }
         }
+
+        // ── Stream closed cleanly (backend timeout / stream_end) ──────────────
+        // The reader reached done=true without a terminal event, meaning the
+        // backend SSE timed out while the task was still running (generation
+        // can take 15-20+ minutes).  Re-check the authoritative status from
+        // the DB and reconnect if the job is still active.
+        if (!unmountedRef.current) {
+          void rehydrateAndMaybeReconnect();
+        }
       } catch {
         // AbortError is expected on cleanup — ignore silently.
-        // For any other error, schedule a reconnect if job is still active.
+        // Any other network error: re-hydrate and reconnect if still active.
         if (!unmountedRef.current) {
-          setState((prev) => {
-            if (ACTIVE_STATUSES.includes(prev.status)) {
-              reconnectTimerRef.current = setTimeout(startStream, 5_000);
-            }
-            return prev;
-          });
+          void rehydrateAndMaybeReconnect();
         }
+      }
+    }
+
+    // Re-fetch the authoritative status from the DB, update local state, and
+    // reconnect the SSE stream if the job is still active.  Called from both
+    // the clean-close path (backend timeout) and the error path so both share
+    // identical recovery behaviour.
+    async function rehydrateAndMaybeReconnect() {
+      try {
+        const r = await fetch(`${API_BASE}/leads/${leadId}/strategy-brief/status`, {
+          headers: authHeaders(),
+        });
+        if (!r.ok || unmountedRef.current) return;
+        const data = await r.json() as Record<string, unknown>;
+        if (unmountedRef.current) return;
+
+        const s = (data.strategy_brief_status as BriefStatus) ?? "not_generated";
+        setState((prev) => ({
+          ...prev,
+          status: s,
+          version: Number(data.strategy_brief_version ?? prev.version),
+          jobId: data.job_id ? String(data.job_id) : prev.jobId,
+          jobStatus: data.job_status ? String(data.job_status) : prev.jobStatus,
+          error: data.last_error ? String(data.last_error) : prev.error,
+          pdfReady: s === "ready",
+        }));
+
+        // If the task is still running, reconnect after a short pause so we
+        // keep watching for completion without hammering the server.
+        if (ACTIVE_STATUSES.includes(s)) {
+          reconnectTimerRef.current = setTimeout(startStream, 5_000);
+        }
+      } catch {
+        // Non-fatal — the user can manually refresh if needed.
       }
     }
 

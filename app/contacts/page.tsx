@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useRef } from "react";
+import { useScoreStream } from "@/hooks/useScoreStream";
 import Link from "next/link";
 import {
   Search, Mail, Phone, Building2, Plus, Upload, X, ChevronDown,
@@ -192,6 +193,24 @@ export default function ContactsPage() {
   const [formOwner, setFormOwner] = useState("");
   const [users, setUsers] = useState<AppUser[]>([]);
 
+  // SSE for single-add: tracks the one newly created contact until it is scored.
+  const [sseContactId, setSseContactId] = useState<number | null>(null);
+  const [sseContactStatus, setSseContactStatus] = useState<string>("pending");
+  const { liveStatus: contactLiveStatus } = useScoreStream({
+    entityType: "contact",
+    entityId: sseContactId,
+    initialStatus: sseContactStatus,
+    onComplete: async () => {
+      if (sseContactId) {
+        try {
+          const res = await API.get(`/contacts/${sseContactId}`);
+          setContacts((prev) => prev.map((c) => (c.id === sseContactId ? res.data : c)));
+        } catch { /* ignore */ }
+      }
+      setSseContactId(null);
+    },
+  });
+
   async function fetchContacts(p = page) {
     setLoading(true);
     try {
@@ -235,9 +254,20 @@ export default function ContactsPage() {
   useEffect(() => { pageRef.current = page; }, [page]);
   useEffect(() => { searchRef.current = search; }, [search]);
 
-  // Poll silently while any contact is still being scored.
+  // Propagate SSE live status to the tracked row in real time.
+  useEffect(() => {
+    if (!sseContactId || !contactLiveStatus) return;
+    setContacts((prev) =>
+      prev.map((c) => (c.id === sseContactId ? { ...c, scoring_status: contactLiveStatus } : c))
+    );
+  }, [sseContactId, contactLiveStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll silently while any contact is still being scored — but skip the one
+  // already tracked by SSE so we don't double-poll for single-add contacts.
   const hasActiveScoringContacts = contacts.some(
-    (c) => c.scoring_status === "pending" || c.scoring_status === "scoring"
+    (c) =>
+      (c.scoring_status === "pending" || c.scoring_status === "scoring") &&
+      c.id !== sseContactId
   );
   useEffect(() => {
     if (!hasActiveScoringContacts) return;
@@ -304,7 +334,7 @@ export default function ContactsPage() {
     if (!form.source?.trim()) { setFormError("Source is required."); return; }
     setSaving(true);
     try {
-      await API.post("/contacts", {
+      const { data: created } = await API.post<Contact>("/contacts", {
         first_name: form.first_name.trim(),
         last_name: form.last_name?.trim() || undefined,
         email: form.email.trim(),
@@ -322,6 +352,8 @@ export default function ContactsPage() {
       setFormCompanySearch("");
       setFormOwner("");
       fetchContacts();
+      setSseContactId(created.id);
+      setSseContactStatus(created.scoring_status ?? "pending");
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       setFormError(msg ?? "Failed to create contact.");

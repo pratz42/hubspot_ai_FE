@@ -20,6 +20,7 @@ import { useScoreStream } from "@/hooks/useScoreStream";
 import { useStrategyBrief } from "@/hooks/useStrategyBrief";
 import { ScoreStatusBadge } from "@/components/ui/ScoreStatusBadge";
 import { StrategyBriefCard, StrategyBriefActionButton } from "@/components/leads/StrategyBriefCard";
+import { AISummaryCard } from "@/components/shared/AISummaryCard";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -1157,6 +1158,9 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
 
           {/* Strategy Brief */}
           <StrategyBriefCard brief={brief} scoringStatus={effectiveStatus} />
+
+          {/* AI Snapshot */}
+          <AISummaryCard leadId={lead.id} />
 
           {/* Scoring state sidebar panel */}
           {(effectiveStatus === "pending" || effectiveStatus === "scoring" || effectiveStatus === "failed") && (

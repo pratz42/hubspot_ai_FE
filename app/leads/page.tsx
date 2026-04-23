@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, Fragment, useRef } from "react";
+import { useScoreStream } from "@/hooks/useScoreStream";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -344,6 +345,24 @@ export default function LeadsPage() {
   const searchTermRef = useRef(searchTerm);
   const filtersRef = useRef(filters);
 
+  // SSE for single-add: tracks the one newly created lead until it is scored.
+  const [sseLeadId, setSseLeadId] = useState<number | null>(null);
+  const [sseLeadStatus, setSseLeadStatus] = useState<string>("pending");
+  const { liveStatus: leadLiveStatus } = useScoreStream({
+    entityType: "lead",
+    entityId: sseLeadId,
+    initialStatus: sseLeadStatus,
+    onComplete: async () => {
+      if (sseLeadId) {
+        try {
+          const res = await API.get(`/leads/${sseLeadId}`);
+          setFilteredLeads((prev) => prev.map((l) => (l.id === sseLeadId ? res.data : l)));
+        } catch { /* ignore */ }
+      }
+      setSseLeadId(null);
+    },
+  });
+
   useEffect(() => { fetchFilterOptions(); }, []);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -362,9 +381,20 @@ export default function LeadsPage() {
   useEffect(() => { searchTermRef.current = searchTerm; }, [searchTerm]);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
 
-  // Poll silently while any lead is still being scored.
+  // Propagate SSE live status to the tracked row in real time.
+  useEffect(() => {
+    if (!sseLeadId || !leadLiveStatus) return;
+    setFilteredLeads((prev) =>
+      prev.map((l) => (l.id === sseLeadId ? { ...l, scoring_status: leadLiveStatus } : l))
+    );
+  }, [sseLeadId, leadLiveStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll silently while any lead is still being scored — but skip the one
+  // already tracked by SSE so we don't double-poll for single-add leads.
   const hasActiveScoringLeads = filteredLeads.some(
-    (l) => l.scoring_status === "pending" || l.scoring_status === "scoring"
+    (l) =>
+      (l.scoring_status === "pending" || l.scoring_status === "scoring") &&
+      l.id !== sseLeadId
   );
   useEffect(() => {
     if (!hasActiveScoringLeads) return;
@@ -559,7 +589,9 @@ export default function LeadsPage() {
         } else {
           payload.company_id_assoc = selectedAssoc.id;
         }
-        await API.post("/leads", payload);
+        const { data: createdLead } = await API.post<Lead>("/leads", payload);
+        setSseLeadId(createdLead.id);
+        setSseLeadStatus(createdLead.scoring_status ?? "pending");
       }
       setFormSuccess(true);
       await fetchLeads(true);
