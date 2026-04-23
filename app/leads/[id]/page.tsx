@@ -17,7 +17,10 @@ import API from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import { getPipelineStage } from "@/lib/pipeline";
 import { useScoreStream } from "@/hooks/useScoreStream";
+import { useStrategyBrief } from "@/hooks/useStrategyBrief";
 import { ScoreStatusBadge } from "@/components/ui/ScoreStatusBadge";
+import { StrategyBriefCard, StrategyBriefActionButton } from "@/components/leads/StrategyBriefCard";
+import { AISummaryCard } from "@/components/shared/AISummaryCard";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -155,6 +158,10 @@ interface Lead {
   company_id_assoc?: number;
   scoring_status?: string;
   scoring_version?: number;
+  strategy_brief_status?: string;
+  strategy_brief_version?: number;
+  strategy_brief_job_id?: string | null;
+  strategy_brief_updated_at?: string | null;
 }
 
 /* ── Knowledge parser ───────────────────────────────────────────────── */
@@ -385,6 +392,8 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
 
   const effectiveStatus = liveStatus ?? lead?.scoring_status ?? "scored";
 
+  const brief = useStrategyBrief(lead?.id ?? null);
+
   async function handleRetry() {
     if (!leadId || retrying) return;
     setRetrying(true);
@@ -537,6 +546,7 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                 </Button>
               </a>
             )}
+            <StrategyBriefActionButton brief={brief} scoringStatus={effectiveStatus} />
             <Button size="sm" className="bg-orange-600 hover:bg-orange-700 h-8 text-xs font-semibold">
               <Zap className="w-3.5 h-3.5 mr-1.5" />Convert to Deal
             </Button>
@@ -1145,6 +1155,12 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
               </a>
             </div>
           </div>
+
+          {/* Strategy Brief */}
+          <StrategyBriefCard brief={brief} scoringStatus={effectiveStatus} />
+
+          {/* AI Snapshot */}
+          <AISummaryCard leadId={lead.id} />
 
           {/* Scoring state sidebar panel */}
           {(effectiveStatus === "pending" || effectiveStatus === "scoring" || effectiveStatus === "failed") && (

@@ -15,6 +15,7 @@ import { getErrorMessage } from "@/lib/errors";
 import { getPipelineStage } from "@/lib/pipeline";
 import { useScoreStream } from "@/hooks/useScoreStream";
 import { ScoreStatusBadge } from "@/components/ui/ScoreStatusBadge";
+import { AISummaryCard } from "@/components/shared/AISummaryCard";
 
 interface ScoreComponent {
   component: string;
@@ -460,6 +461,8 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
               )}
             </div>
           )}
+          {/* AI Snapshot */}
+          <AISummaryCard contactId={contact.id} />
         </div>
 
         {/* RIGHT: AI Intelligence + Records */}
