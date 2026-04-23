@@ -29,6 +29,7 @@ interface Contact {
   company_name?: string;
   pre_ai_score?: number | null;
   pre_ai_reason?: string | null;
+  pre_ai_suggested_offerings?: string[] | null;
   scoring_status?: string;
 }
 
@@ -68,6 +69,14 @@ const LIFECYCLE_OPTIONS = [
   { value: "customer", label: "Customer" },
   { value: "evangelist", label: "Evangelist" },
   { value: "other", label: "Other" },
+];
+
+const OFFERING_COLORS = [
+  "bg-indigo-50 text-indigo-700 border border-indigo-100",
+  "bg-violet-50 text-violet-700 border border-violet-100",
+  "bg-emerald-50 text-emerald-700 border border-emerald-100",
+  "bg-orange-50 text-orange-700 border border-orange-100",
+  "bg-teal-50 text-teal-700 border border-teal-100",
 ];
 
 const AVATAR_GRADIENTS = [
@@ -475,7 +484,7 @@ export default function ContactsPage() {
             <div className="hidden lg:block w-40 flex-shrink-0 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Company</div>
             <div className="hidden xl:block w-28 flex-shrink-0 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Industry</div>
             <div className="w-36 flex-shrink-0 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stage / Readiness</div>
-            <div className="hidden md:block w-28 flex-shrink-0 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Owner</div>
+            <div className="hidden md:block w-40 flex-shrink-0 text-[10px] font-bold text-slate-400 uppercase tracking-wider">AI Suggestions</div>
             <div className="w-20 flex-shrink-0" />
           </div>
 
@@ -556,13 +565,40 @@ export default function ContactsPage() {
                   </span>
                 </div>
 
-                {/* Owner */}
-                <div className="hidden md:block w-28 flex-shrink-0">
-                  {contact.owner ? (
-                    <span className="text-xs text-slate-500 truncate block">{contact.owner.split("@")[0]}</span>
-                  ) : (
-                    <span className="text-slate-300 text-xs">Unassigned</span>
-                  )}
+                {/* AI Suggestions */}
+                <div className="hidden md:block w-40 flex-shrink-0">
+                  {contact.pre_ai_suggested_offerings && contact.pre_ai_suggested_offerings.length > 0 ? (
+                    <div className="flex flex-col gap-1">
+                      {contact.pre_ai_suggested_offerings.slice(0, 2).map((o, idx) => (
+                        <span
+                          key={idx}
+                          className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold truncate max-w-[148px] ${OFFERING_COLORS[idx % OFFERING_COLORS.length]}`}
+                          title={o}
+                        >
+                          {o}
+                        </span>
+                      ))}
+                      {contact.pre_ai_suggested_offerings.length > 2 && (
+                        <span className="relative group/more w-fit">
+                          <span className="text-[10px] text-slate-400 font-medium pl-0.5 cursor-default">
+                            +{contact.pre_ai_suggested_offerings.length - 2} more
+                          </span>
+                          <div className="absolute left-0 bottom-full mb-1.5 z-50 invisible group-hover/more:visible opacity-0 group-hover/more:opacity-100 transition-opacity duration-150 bg-white border border-slate-200 rounded-lg shadow-lg p-2 w-52 flex flex-col gap-1.5 pointer-events-none">
+                            {contact.pre_ai_suggested_offerings.slice(2).map((o, idx) => (
+                              <span
+                                key={idx}
+                                className={`inline-flex px-2 py-1 rounded text-[10px] font-semibold ${OFFERING_COLORS[(idx + 2) % OFFERING_COLORS.length]}`}
+                              >
+                                {o}
+                              </span>
+                            ))}
+                          </div>
+                        </span>
+                      )}
+                    </div>
+                  ) : contact.scoring_status === "scored" ? (
+                    <span className="text-slate-300 text-xs">—</span>
+                  ) : null}
                 </div>
 
                 {/* Actions */}

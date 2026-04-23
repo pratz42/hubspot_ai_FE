@@ -62,6 +62,7 @@ interface Contact {
   created_at: string;
   pre_ai_score?: number | null;
   pre_ai_reason?: string | null;
+  pre_ai_suggested_offerings?: string[] | null;
   pre_ai_breakdown?: PreAIBreakdown | null;
   pre_ai_scored_at?: string | null;
   scoring_status?: string;
@@ -130,6 +131,14 @@ const AVATAR_GRADIENTS = [
   "from-blue-500 to-blue-600",
 ];
 
+const OFFERING_COLORS = [
+  "bg-indigo-50 text-indigo-700 border border-indigo-200",
+  "bg-violet-50 text-violet-700 border border-violet-200",
+  "bg-emerald-50 text-emerald-700 border border-emerald-200",
+  "bg-orange-50 text-orange-700 border border-orange-200",
+  "bg-teal-50 text-teal-700 border border-teal-200",
+];
+
 function avatarGradient(name: string) {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
@@ -182,7 +191,7 @@ function ScoreRing({ score }: { score: number }) {
       </div>
       <div>
         <p className={`text-lg font-bold ${textColor}`}>{label}</p>
-        <p className="text-xs text-slate-400 mt-0.5">Pre-AI Score</p>
+        <p className="text-xs text-slate-400 mt-0.5">Preliminary AI Score</p>
         <p className="text-[10px] text-slate-300 mt-1">AI qualification index</p>
       </div>
     </div>
@@ -399,6 +408,7 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
                 { icon: MapPin, label: "Location", value: [contact.city, contact.country].filter(Boolean).join(", ") || null },
                 { icon: User, label: "Owner", value: contact.owner },
                 { icon: Calendar, label: "Created", value: formatDate(contact.created_at) },
+                { icon: Brain, label: "AI Scored", value: contact.pre_ai_scored_at ? formatDate(contact.pre_ai_scored_at) : null },
               ].filter((f) => f.value).map((field) => (
                 <div key={field.label} className="flex items-start gap-3">
                   <div className="w-7 h-7 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -550,6 +560,30 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
                     <div className="bg-slate-50 rounded-lg px-4 py-3 border border-slate-100">
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">AI Assessment</p>
                       <p className="text-sm text-slate-700 leading-relaxed">{contact.pre_ai_reason}</p>
+                    </div>
+                  )}
+
+                  {/* Recommended Offerings */}
+                  {contact.pre_ai_suggested_offerings && contact.pre_ai_suggested_offerings.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">
+                        Recommended Offerings
+                      </p>
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {contact.pre_ai_suggested_offerings.map((o, i) => (
+                          <span
+                            key={i}
+                            className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold ${OFFERING_COLORS[i % OFFERING_COLORS.length]}`}
+                          >
+                            {o}
+                          </span>
+                        ))}
+                      </div>
+                      {breakdown?.offering_alignment?.reason && (
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          {breakdown.offering_alignment.reason}
+                        </p>
+                      )}
                     </div>
                   )}
 
