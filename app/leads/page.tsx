@@ -6,45 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Search,
-  Plus,
-  Eye,
-  Star,
-  Mail,
-  Phone,
-  Users,
-  ChevronDown,
-  ChevronUp,
-  Globe,
-  Building2,
-  Calendar,
-  MessageSquare,
-  Brain,
-  Target,
-  TrendingUp,
-  TrendingDown,
-  Minus,
-  ExternalLink,
-  Zap,
-  FileText,
-  X,
-  Loader2,
-  Upload,
-  Download,
-  SlidersHorizontal,
-  Pencil,
-  CheckCircle2,
-  AlertCircle,
-  Filter,
-  Briefcase,
-  Sparkles,
-  LayoutList,
-  AlignJustify,
-  Flame,
-  Thermometer,
-  Activity,
-  AlertTriangle,
-  BookOpen,
+  Search, Plus, Eye, Star, Mail, Phone, Users, ChevronDown, ChevronUp,
+  Globe, Building2, Calendar, Brain, Clock, XCircle, MessageSquare,
+  Target, TrendingUp, TrendingDown, Minus, ExternalLink, Zap, FileText,
+  X, Loader2, Upload, Download, SlidersHorizontal, Pencil, CheckCircle2,
+  AlertCircle, Filter, Briefcase, Sparkles, LayoutList, AlignJustify,
+  Flame, Thermometer, Activity, AlertTriangle, BookOpen,
 } from "lucide-react";
 import API, { extractArray } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
@@ -121,6 +88,7 @@ interface Lead {
   company_id_assoc?: number;
   status: string;
   created_at: string;
+  scoring_status?: string;
 }
 
 interface FilterOptions {
@@ -187,14 +155,19 @@ const getOfferingColor = (index: number) => {
   return colors[index % colors.length];
 };
 
-const getScoreColor = (score?: number) => {
+const getScoreColor = (score?: number, scoringStatus?: string) => {
+  if (scoringStatus === "pending" || scoringStatus === "scoring") return "text-blue-500";
+  if (scoringStatus === "failed") return "text-red-400";
   if (!score) return "text-slate-400";
   if (score >= 80) return "text-emerald-700";
   if (score >= 60) return "text-amber-700";
   return "text-red-600";
 };
 
-const getScoreBorder = (score?: number) => {
+const getScoreBorder = (score?: number, scoringStatus?: string) => {
+  if (scoringStatus === "pending") return "border-slate-200 bg-slate-50";
+  if (scoringStatus === "scoring") return "border-blue-200 bg-blue-50";
+  if (scoringStatus === "failed") return "border-red-200 bg-red-50";
   if (!score) return "border-slate-200 bg-slate-50";
   if (score >= 80) return "border-emerald-200 bg-emerald-50";
   if (score >= 60) return "border-amber-200 bg-amber-50";
@@ -367,6 +340,9 @@ export default function LeadsPage() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pageRef = useRef(page);
+  const searchTermRef = useRef(searchTerm);
+  const filtersRef = useRef(filters);
 
   useEffect(() => { fetchFilterOptions(); }, []);
 
@@ -381,6 +357,33 @@ export default function LeadsPage() {
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm]);
+
+  useEffect(() => { pageRef.current = page; }, [page]);
+  useEffect(() => { searchTermRef.current = searchTerm; }, [searchTerm]);
+  useEffect(() => { filtersRef.current = filters; }, [filters]);
+
+  // Poll silently while any lead is still being scored.
+  const hasActiveScoringLeads = filteredLeads.some(
+    (l) => l.scoring_status === "pending" || l.scoring_status === "scoring"
+  );
+  useEffect(() => {
+    if (!hasActiveScoringLeads) return;
+    const id = setInterval(async () => {
+      try {
+        const params: Record<string, string | number> = {
+          ...buildFilterParams(filtersRef.current),
+          page: pageRef.current,
+          per_page: PER_PAGE,
+        };
+        if (searchTermRef.current) params.search = searchTermRef.current;
+        const res = await API.get("/leads", { params });
+        const data = extractArray<Lead>(res.data);
+        setFilteredLeads(data);
+        setTotal(res.data?.total ?? data.length);
+      } catch { /* ignore */ }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [hasActiveScoringLeads]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const buildFilterParams = (f: ActiveFilters) => {
     const params: Record<string, string> = {};
@@ -1092,7 +1095,19 @@ export default function LeadsPage() {
 
                     {/* AI Score */}
                     <td className="py-3 px-4 align-middle min-w-[120px]">
-                      {lead.ai_score != null ? (
+                      {lead.scoring_status === "pending" ? (
+                        <div className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-semibold border-slate-200 bg-slate-50 text-slate-400 animate-pulse">
+                          <Clock className="w-3 h-3" />Queued
+                        </div>
+                      ) : lead.scoring_status === "scoring" ? (
+                        <div className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-semibold border-blue-200 bg-blue-50 text-blue-500">
+                          <Brain className="w-3 h-3 animate-pulse" />Scoring…
+                        </div>
+                      ) : lead.scoring_status === "failed" ? (
+                        <div className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-semibold border-red-200 bg-red-50 text-red-500">
+                          <XCircle className="w-3 h-3" />Failed
+                        </div>
+                      ) : lead.ai_score != null ? (
                         <div className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-bold ${getScoreBorder(lead.ai_score)} ${getScoreColor(lead.ai_score)}`}>
                           <Star className="w-3 h-3" />
                           {lead.ai_score.toFixed(0)}

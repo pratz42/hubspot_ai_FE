@@ -6,7 +6,7 @@ import {
   Brain, Building2, ChevronDown, ChevronUp, Eye,
   Pencil, Briefcase, DollarSign, Mail, Phone,
   Sparkles, Target, Zap, TrendingUp, TrendingDown, Minus,
-  ExternalLink, FileText, MessageSquare, Globe,
+  ExternalLink, FileText, MessageSquare, Globe, Clock, XCircle,
 } from "lucide-react";
 import {
   getPipelineStage,
@@ -63,6 +63,7 @@ export interface StageLead {
   status: string;
   created_at: string;
   hybrid_score?: number;
+  scoring_status?: string;
 }
 
 export interface StageViewProps {
@@ -346,12 +347,29 @@ function LeadRowCard({ lead, onEdit, onConvertToDeal }: LeadRowCardProps) {
 
             {/* AI Score */}
             <div className="flex flex-col items-center gap-1 flex-shrink-0">
-              <div className={`w-11 h-11 rounded-xl border-2 ${sc.border} ${sc.bg} flex flex-col items-center justify-center flex-shrink-0`}>
-                <span className={`text-sm font-black ${sc.color} leading-none`}>
-                  {lead.ai_score != null ? lead.ai_score.toFixed(0) : "—"}
-                </span>
-              </div>
-              {lead.ai_score != null && (
+              {lead.scoring_status === "pending" ? (
+                <div className="w-11 h-11 rounded-xl border-2 border-slate-200 bg-slate-50 flex items-center justify-center animate-pulse">
+                  <Clock className="w-4 h-4 text-slate-300" />
+                </div>
+              ) : lead.scoring_status === "scoring" ? (
+                <div className="w-11 h-11 rounded-xl border-2 border-blue-200 bg-blue-50 flex items-center justify-center">
+                  <Brain className="w-4 h-4 text-blue-400 animate-pulse" />
+                </div>
+              ) : lead.scoring_status === "failed" ? (
+                <div className="w-11 h-11 rounded-xl border-2 border-red-200 bg-red-50 flex items-center justify-center">
+                  <XCircle className="w-4 h-4 text-red-400" />
+                </div>
+              ) : (
+                <div className={`w-11 h-11 rounded-xl border-2 ${sc.border} ${sc.bg} flex flex-col items-center justify-center flex-shrink-0`}>
+                  <span className={`text-sm font-black ${sc.color} leading-none`}>
+                    {lead.ai_score != null ? lead.ai_score.toFixed(0) : "—"}
+                  </span>
+                </div>
+              )}
+              {lead.scoring_status === "pending" && <span className="text-[8px] font-semibold text-slate-400 uppercase">Queued</span>}
+              {lead.scoring_status === "scoring" && <span className="text-[8px] font-semibold text-blue-500 uppercase">Scoring</span>}
+              {lead.scoring_status === "failed" && <span className="text-[8px] font-semibold text-red-400 uppercase">Failed</span>}
+              {(!lead.scoring_status || lead.scoring_status === "scored") && lead.ai_score != null && (
                 <span className={`text-[9px] font-bold uppercase tracking-wide ${sc.color}`}>{sc.label}</span>
               )}
               {lead.used_web_evidence && (

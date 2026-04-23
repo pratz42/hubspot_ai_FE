@@ -1,17 +1,20 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft, Mail, Phone, Building2, Calendar, Globe, MapPin,
   Briefcase, Star, User, Tag, AlertCircle, Loader2, ExternalLink,
   Activity, TrendingUp, Clock, DollarSign, ChevronDown, ChevronUp,
-  Zap, CheckCircle2, XCircle, AlertTriangle, ArrowUpRight,
+  Zap, CheckCircle2, XCircle, AlertTriangle, ArrowUpRight, Brain,
+  RefreshCw, RotateCcw,
 } from "lucide-react";
 import API from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import { getPipelineStage } from "@/lib/pipeline";
+import { useScoreStream } from "@/hooks/useScoreStream";
+import { ScoreStatusBadge } from "@/components/ui/ScoreStatusBadge";
 
 interface ScoreComponent {
   component: string;
@@ -61,6 +64,8 @@ interface Contact {
   pre_ai_reason?: string | null;
   pre_ai_breakdown?: PreAIBreakdown | null;
   pre_ai_scored_at?: string | null;
+  scoring_status?: string;
+  scoring_version?: number;
 }
 
 interface Company {
@@ -146,6 +151,10 @@ function formatAmount(v?: number) {
 }
 
 function getReadiness(contact: Contact): { label: string; color: string; bg: string; icon: React.ElementType } {
+  const status = contact.scoring_status;
+  if (status === "pending") return { label: "Queued", color: "text-slate-500", bg: "bg-slate-100", icon: Clock };
+  if (status === "scoring") return { label: "Scoring…", color: "text-blue-600", bg: "bg-blue-50", icon: Brain };
+  if (status === "failed") return { label: "Score Failed", color: "text-red-600", bg: "bg-red-100", icon: XCircle };
   const score = contact.pre_ai_score;
   if (score == null) return { label: "Not Scored", color: "text-slate-500", bg: "bg-slate-100", icon: AlertCircle };
   if (!contact.company_id) return { label: "Missing Company", color: "text-slate-600", bg: "bg-slate-100", icon: AlertTriangle };
@@ -214,6 +223,23 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [breakdownOpen, setBreakdownOpen] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+
+  const loadContact = useCallback(async () => {
+    if (!id) return;
+    try {
+      const c: Contact = (await API.get(`/contacts/${id}`)).data;
+      setContact(c);
+      if (c.company_id) {
+        try {
+          const coRes = await API.get(`/companies/${c.company_id}`);
+          setCompany(coRes.data);
+        } catch { /* no company */ }
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, "Unable to load contact."));
+    }
+  }, [id]);
 
   useEffect(() => {
     if (!id) return;
@@ -239,6 +265,26 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
       .catch((err) => setError(getErrorMessage(err, "Unable to load contact.")))
       .finally(() => setLoading(false));
   }, [id]);
+
+  const { liveStatus, isStreaming } = useScoreStream({
+    entityType: "contact",
+    entityId: contact?.id ?? null,
+    initialStatus: contact?.scoring_status ?? "scored",
+    onComplete: loadContact,
+  });
+
+  const effectiveStatus = liveStatus ?? contact?.scoring_status ?? "scored";
+
+  async function handleRetry() {
+    if (!id || retrying) return;
+    setRetrying(true);
+    try {
+      await API.post(`/ai-jobs/contacts/${id}/retry`);
+      await loadContact();
+    } catch { /* ignore */ } finally {
+      setRetrying(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -294,7 +340,8 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
               <div className="flex items-center gap-2.5 flex-wrap mb-1">
                 <h1 className="text-xl font-bold text-slate-900">{fullName}</h1>
                 <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold ${lcColor}`}>{lcLabel}</span>
-                {contact.pre_ai_score != null && (
+                <ScoreStatusBadge status={effectiveStatus} size="md" />
+                {effectiveStatus === "scored" && contact.pre_ai_score != null && (
                   <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold ${readiness.bg} ${readiness.color}`}>
                     <ReadinessIcon className="w-3 h-3" />
                     {readiness.label}
@@ -417,7 +464,66 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
             </div>
 
             <div className="p-5">
-              {contact.pre_ai_score == null ? (
+              {effectiveStatus === "pending" ? (
+                <div className="flex items-center gap-4 py-6">
+                  <div className="w-14 h-14 rounded-full border-[3px] border-slate-200 bg-slate-50 flex items-center justify-center flex-shrink-0 animate-pulse">
+                    <Clock className="w-5 h-5 text-slate-300" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-600">AI scoring queued</p>
+                    <p className="text-xs text-slate-400 mt-0.5">Your contact is in the queue — results arrive in seconds.</p>
+                    {isStreaming && <p className="text-[10px] text-blue-500 font-medium mt-1.5 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping inline-block" />Waiting for worker…</p>}
+                  </div>
+                </div>
+              ) : effectiveStatus === "scoring" ? (
+                <div>
+                  <div className="flex items-center gap-4 py-2 mb-5">
+                    <div className="w-14 h-14 rounded-full border-[3px] border-blue-300 bg-blue-50 flex items-center justify-center flex-shrink-0">
+                      <Brain className="w-5 h-5 text-blue-500 animate-pulse" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-blue-700">Analyzing contact…</p>
+                      <p className="text-xs text-slate-400 mt-0.5">AI is evaluating ICP fit, persona signals, and intent.</p>
+                      <p className="text-[10px] text-blue-500 font-medium mt-1.5 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping inline-block" />Live — updating when ready</p>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    {[80, 60, 45].map((w, i) => (
+                      <div key={i} className="space-y-1.5 animate-pulse">
+                        <div className="flex justify-between">
+                          <div className={`h-2.5 bg-slate-200 rounded w-${["32", "24", "36"][i]}`} />
+                          <div className="h-2.5 bg-slate-200 rounded w-12" />
+                        </div>
+                        <div className="h-1.5 bg-slate-100 rounded-full">
+                          <div className="h-full bg-blue-200 rounded-full animate-pulse" style={{ width: `${w}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : effectiveStatus === "failed" ? (
+                <div className="flex items-start gap-4 py-4">
+                  <div className="w-12 h-12 rounded-full bg-red-50 border-2 border-red-200 flex items-center justify-center flex-shrink-0">
+                    <XCircle className="w-5 h-5 text-red-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-red-700">Scoring failed</p>
+                    <p className="text-xs text-slate-400 mt-0.5">The AI engine encountered an error. You can retry below.</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-3 h-8 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300"
+                      onClick={handleRetry}
+                      disabled={retrying}
+                    >
+                      {retrying
+                        ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Retrying…</>
+                        : <><RotateCcw className="w-3.5 h-3.5 mr-1.5" />Retry scoring</>
+                      }
+                    </Button>
+                  </div>
+                </div>
+              ) : contact.pre_ai_score == null ? (
                 <div className="flex items-center gap-3 py-4">
                   <AlertCircle className="w-8 h-8 text-slate-200" />
                   <div>
@@ -503,6 +609,21 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
                     <Zap className="w-3.5 h-3.5 mr-1.5" />Convert to Lead
                   </Button>
                 </Link>
+                {effectiveStatus === "scored" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-xs border-slate-200 hover:border-violet-300 hover:text-violet-600"
+                    onClick={handleRetry}
+                    disabled={retrying}
+                  >
+                    {retrying
+                      ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                      : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                    }
+                    Re-score
+                  </Button>
+                )}
                 {contact.email && (
                   <a href={`mailto:${contact.email}`}>
                     <Button size="sm" variant="outline" className="h-8 text-xs border-slate-200 hover:border-indigo-300 hover:text-indigo-600">
