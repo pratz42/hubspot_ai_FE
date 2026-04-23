@@ -694,14 +694,10 @@ export default function LeadsPage() {
   const baseLeads = aiResult ? aiResult.results : filteredLeads;
 
   const getIntentScore = (l: Lead) =>
-    l.final_score_breakdown?.totals?.intent_score
-    ?? l.score_breakdown?.intent_score
-    ?? l.score_breakdown?.score_breakdown?.intent_score
-    ?? 0;
+    l.final_score_breakdown?.totals?.intent_score ?? 0;
 
   const hasBreakdownData = (l: Lead) =>
-    (l.final_score_breakdown?.components?.length ?? 0) > 0
-    || (l.score_breakdown?.components?.length ?? 0) > 0;
+    (l.final_score_breakdown?.components?.length ?? 0) > 0;
 
   const smartFilteredLeads = smartFilter === "all" ? baseLeads : baseLeads.filter((l) => {
     const score = l.ai_score ?? 0;
@@ -1116,9 +1112,8 @@ export default function LeadsPage() {
                         <span className="text-slate-200 text-sm">—</span>
                       )}
                       {(() => {
-                        const sb = lead.score_breakdown;
-                        const intentScore = lead.final_score_breakdown?.totals?.intent_score ?? sb?.intent_score ?? sb?.score_breakdown?.intent_score;
-                        const evidenceScore = lead.final_score_breakdown?.totals?.evidence_score ?? sb?.evidence_score ?? sb?.score_breakdown?.evidence_score;
+                        const intentScore = lead.final_score_breakdown?.totals?.intent_score ?? null;
+                        const evidenceScore = lead.final_score_breakdown?.totals?.evidence_score ?? null;
                         if (intentScore == null && evidenceScore == null) return null;
                         return (
                           <div className="mt-1.5 space-y-0.5">
@@ -1227,21 +1222,16 @@ export default function LeadsPage() {
                     {/* Expanded detail panel */}
                     {expandedId === lead.id && (() => {
                       const fsb = lead.final_score_breakdown;
-                      const sb = lead.score_breakdown;
                       const fsbComps = fsb?.components ?? [];
                       const hasFsb = fsbComps.length > 0;
-                      const legacyComps = !hasFsb ? (sb?.components ?? sb?.score_breakdown?.components ?? []) : [];
-                      const hasStructured = hasFsb || legacyComps.length > 0;
-                      const bd = hasStructured ? null : parseScoreBreakdown(lead.score_comment);
+                      const bd = !hasFsb ? parseScoreBreakdown(lead.score_comment) : null;
                       const narrative = getScoreNarrative(lead.score_comment);
-                      const intentItems = hasFsb ? fsbComps.filter((c) => c.category === "Intent") : [];
-                      const evidenceItems = hasFsb ? fsbComps.filter((c) => c.category === "Evidence") : [];
-                      const legacyIntentItems = !hasFsb ? legacyComps.filter((c) => c.label.startsWith("intent:")) : [];
-                      const legacyEvidenceItems = !hasFsb ? legacyComps.filter((c) => c.label.startsWith("evidence:")) : [];
+                      const intentItems = fsbComps.filter((c) => c.category === "Intent");
+                      const evidenceItems = fsbComps.filter((c) => c.category === "Evidence");
                       const bdIntentItems = bd?.items.filter((x) => x.category === "intent") ?? [];
                       const bdEvidenceItems = bd?.items.filter((x) => x.category === "evidence") ?? [];
-                      const intentScore = fsb?.totals?.intent_score ?? sb?.intent_score ?? sb?.score_breakdown?.intent_score;
-                      const evidenceScore = fsb?.totals?.evidence_score ?? sb?.evidence_score ?? sb?.score_breakdown?.evidence_score;
+                      const intentScore = fsb?.totals?.intent_score ?? null;
+                      const evidenceScore = fsb?.totals?.evidence_score ?? null;
                       const pk = parseKnowledge(lead.knowledge);
                       return (
                         <tr className="border-b border-slate-100 bg-gradient-to-b from-orange-50/20 to-white">
@@ -1283,7 +1273,7 @@ export default function LeadsPage() {
                                     <p className="text-xs text-slate-700 leading-relaxed">{narrative ?? lead.score_comment}</p>
                                   )}
                                   {/* Score bars */}
-                                  {(hasStructured || bd) && (
+                                  {(hasFsb || bd) && (
                                     <div className="pt-2 border-t border-slate-100 space-y-2">
                                       {hasFsb ? (
                                         <>
@@ -1331,51 +1321,6 @@ export default function LeadsPage() {
                                                   ))}
                                                 </div>
                                               )}
-                                            </div>
-                                          )}
-                                        </>
-                                      ) : legacyComps.length > 0 ? (
-                                        <>
-                                          {intentScore != null && legacyIntentItems.length > 0 && (
-                                            <div>
-                                              <div className="flex justify-between text-[11px] mb-1">
-                                                <span className="font-semibold text-orange-600 uppercase tracking-wide">Intent</span>
-                                                <span className="font-bold text-slate-700 tabular-nums">{intentScore} / 70</span>
-                                              </div>
-                                              <div className="h-1.5 bg-orange-100 rounded-full overflow-hidden">
-                                                <div className="h-full bg-orange-400 rounded-full" style={{ width: `${Math.min((intentScore / 70) * 100, 100)}%` }} />
-                                              </div>
-                                              <div className="mt-1.5 space-y-1 pl-1">
-                                                {legacyIntentItems.map((comp, i) => (
-                                                  <div key={i} className="flex justify-between items-center text-[11px]">
-                                                    <span className="text-slate-400 capitalize truncate max-w-[160px]">{comp.label.replace(/^intent:\s*/i, "").replace(/_/g, " ")}</span>
-                                                    <span className={`font-semibold tabular-nums ${comp.value > 0 ? "text-green-600" : comp.value < 0 ? "text-red-500" : "text-slate-300"}`}>
-                                                      {comp.value > 0 ? "+" : ""}{comp.value}
-                                                    </span>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            </div>
-                                          )}
-                                          {evidenceScore != null && legacyEvidenceItems.length > 0 && (
-                                            <div className="pt-2 border-t border-slate-100">
-                                              <div className="flex justify-between text-[11px] mb-1">
-                                                <span className="font-semibold text-teal-600 uppercase tracking-wide">Evidence</span>
-                                                <span className="font-bold text-slate-700 tabular-nums">{evidenceScore} / 30</span>
-                                              </div>
-                                              <div className="h-1.5 bg-teal-100 rounded-full overflow-hidden">
-                                                <div className="h-full bg-teal-400 rounded-full" style={{ width: `${Math.min((evidenceScore / 30) * 100, 100)}%` }} />
-                                              </div>
-                                              <div className="mt-1.5 space-y-1 pl-1">
-                                                {legacyEvidenceItems.map((comp, i) => (
-                                                  <div key={i} className="flex justify-between items-center text-[11px]">
-                                                    <span className="text-slate-400 capitalize truncate max-w-[160px]">{comp.label.replace(/^evidence:\s*/i, "").replace(/_/g, " ")}</span>
-                                                    <span className={`font-semibold tabular-nums ${comp.value > 0 ? "text-green-600" : comp.value < 0 ? "text-red-500" : "text-slate-300"}`}>
-                                                      {comp.value > 0 ? "+" : ""}{comp.value}
-                                                    </span>
-                                                  </div>
-                                                ))}
-                                              </div>
                                             </div>
                                           )}
                                         </>
