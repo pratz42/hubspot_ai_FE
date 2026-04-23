@@ -50,6 +50,12 @@ export interface StageLead {
       evidence_score?: number;
     };
   };
+  final_score_breakdown?: {
+    summary?: string;
+    components?: { component: string; category: string; points: number; reason: string; running_total: number; formula: string }[];
+    totals?: { intent_score: number; evidence_score: number; raw_score: number; final_score: number };
+    final_policy_reason?: string;
+  };
   sales_strategy?: string;
   recommended_offerings?: string[];
   tags?: string[];
@@ -269,14 +275,14 @@ function LeadRowCard({ lead, onEdit, onConvertToDeal }: LeadRowCardProps) {
   const grad = avatarGradient(lead.name);
   const sc = getScoreConfig(lead.ai_score);
   const stage = getPipelineStage(lead.status);
-  const sb = lead.score_breakdown;
-  const structComps = sb?.components ?? sb?.score_breakdown?.components ?? [];
-  const hasStructured = structComps.length > 0;
-  const bd = hasStructured ? null : parseScoreBreakdown(lead.score_comment);
-  const intentItems = structComps.filter((c) => c.label.startsWith("intent:"));
-  const evidenceItems = structComps.filter((c) => c.label.startsWith("evidence:"));
-  const bdIntentItems = !hasStructured ? (bd?.items.filter((x) => x.category === "intent") ?? []) : [];
-  const bdEvidenceItems = !hasStructured ? (bd?.items.filter((x) => x.category === "evidence") ?? []) : [];
+  const fsb = lead.final_score_breakdown;
+  const fsbComps = fsb?.components ?? [];
+  const hasStructured = fsbComps.length > 0;
+  const bd = !hasStructured ? parseScoreBreakdown(lead.score_comment) : null;
+  const intentItems = fsbComps.filter((c) => c.category === "Intent");
+  const evidenceItems = fsbComps.filter((c) => c.category === "Evidence");
+  const intentScore = fsb?.totals?.intent_score ?? null;
+  const evidenceScore = fsb?.totals?.evidence_score ?? null;
 
   return (
     <div
@@ -480,54 +486,51 @@ function LeadRowCard({ lead, onEdit, onConvertToDeal }: LeadRowCardProps) {
                   {(hasStructured || bd) && (
                     <div className="bg-white rounded-xl border border-slate-200 p-4">
                       <div className="space-y-3">
-                        {/* Structured breakdown (new API) */}
+                        {/* final_score_breakdown — Intent */}
                         {hasStructured && intentItems.length > 0 && (
                           <div>
                             <div className="flex justify-between items-center text-[11px] mb-1">
                               <span className="font-semibold text-orange-600 uppercase tracking-wide">Intent</span>
-                              <span className="font-bold text-slate-700 tabular-nums">
-                                {sb?.intent_score ?? sb?.score_breakdown?.intent_score ?? "—"} / 70
-                              </span>
+                              <span className="font-bold text-slate-700 tabular-nums">{intentScore ?? "—"} / 70</span>
                             </div>
                             <div className="h-2 bg-orange-100 rounded-full overflow-hidden">
-                              <div className="h-full bg-orange-400 rounded-full" style={{ width: `${Math.min(100, ((sb?.intent_score ?? sb?.score_breakdown?.intent_score ?? 0) / 70) * 100)}%` }} />
+                              <div className="h-full bg-orange-400 rounded-full" style={{ width: `${Math.min(100, ((intentScore ?? 0) / 70) * 100)}%` }} />
                             </div>
                             <div className="mt-2 space-y-1 pl-1">
                               {intentItems.map((comp, i) => (
                                 <div key={i} className="flex justify-between items-center text-[11px]">
-                                  <span className="text-slate-400 capitalize">{comp.label.replace("intent: ", "")}</span>
-                                  <span className={`font-semibold tabular-nums ${comp.value > 0 ? "text-emerald-600" : "text-slate-300"}`}>
-                                    +{comp.value % 1 === 0 ? comp.value.toFixed(0) : comp.value.toFixed(1)}
+                                  <span className="text-slate-400 truncate max-w-[150px]">{comp.component}</span>
+                                  <span className={`font-semibold tabular-nums ${comp.points > 0 ? "text-emerald-600" : "text-slate-300"}`}>
+                                    +{comp.points % 1 === 0 ? comp.points.toFixed(0) : comp.points.toFixed(1)}
                                   </span>
                                 </div>
                               ))}
                             </div>
                           </div>
                         )}
+                        {/* final_score_breakdown — Evidence */}
                         {hasStructured && evidenceItems.length > 0 && (
                           <div className={intentItems.length > 0 ? "pt-3 border-t border-slate-100" : ""}>
                             <div className="flex justify-between items-center text-[11px] mb-1">
                               <span className="font-semibold text-teal-600 uppercase tracking-wide">Evidence</span>
-                              <span className="font-bold text-slate-700 tabular-nums">
-                                {sb?.evidence_score ?? sb?.score_breakdown?.evidence_score ?? "—"} / 30
-                              </span>
+                              <span className="font-bold text-slate-700 tabular-nums">{evidenceScore ?? "—"} / 30</span>
                             </div>
                             <div className="h-2 bg-teal-100 rounded-full overflow-hidden">
-                              <div className="h-full bg-teal-400 rounded-full" style={{ width: `${Math.min(100, ((sb?.evidence_score ?? sb?.score_breakdown?.evidence_score ?? 0) / 30) * 100)}%` }} />
+                              <div className="h-full bg-teal-400 rounded-full" style={{ width: `${Math.min(100, ((evidenceScore ?? 0) / 30) * 100)}%` }} />
                             </div>
                             <div className="mt-2 space-y-1 pl-1">
                               {evidenceItems.map((comp, i) => (
                                 <div key={i} className="flex justify-between items-center text-[11px]">
-                                  <span className="text-slate-400 capitalize">{comp.label.replace("evidence: ", "")}</span>
-                                  <span className={`font-semibold tabular-nums ${comp.value > 0 ? "text-emerald-600" : "text-slate-300"}`}>
-                                    +{comp.value % 1 === 0 ? comp.value.toFixed(0) : comp.value.toFixed(1)}
+                                  <span className="text-slate-400 truncate max-w-[150px]">{comp.component}</span>
+                                  <span className={`font-semibold tabular-nums ${comp.points > 0 ? "text-emerald-600" : "text-slate-300"}`}>
+                                    +{comp.points % 1 === 0 ? comp.points.toFixed(0) : comp.points.toFixed(1)}
                                   </span>
                                 </div>
                               ))}
                             </div>
                           </div>
                         )}
-                        {/* Fallback: regex-parsed breakdown (legacy) */}
+                        {/* Fallback: regex-parsed breakdown */}
                         {!hasStructured && bd && bd.intentTotal !== null && (
                           <div>
                             <div className="flex justify-between items-center text-[11px] mb-1">

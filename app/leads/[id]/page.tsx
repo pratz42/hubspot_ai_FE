@@ -455,18 +455,15 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
 
   const fsbComps: FinalBreakdownComponent[] = fsb?.components ?? [];
   const hasFsb = fsbComps.length > 0;
-  const legacyComps: ScoreComponent[] = !hasFsb ? (sb?.components ?? sb?.score_breakdown?.components ?? []) : [];
 
-  const intentScore = fsb?.totals?.intent_score ?? sb?.intent_score ?? sb?.score_breakdown?.intent_score ?? null;
-  const evidenceScore = fsb?.totals?.evidence_score ?? sb?.evidence_score ?? sb?.score_breakdown?.evidence_score ?? null;
-  const breakdownSummary = fsb?.summary ?? sb?.summary ?? sb?.score_breakdown?.summary;
-  const policyReason = fsb?.final_policy_reason ?? sb?.final_policy_reason ?? sb?.score_breakdown?.final_policy_reason;
-  const hasBreakdown = hasFsb || legacyComps.length > 0;
+  const intentScore = fsb?.totals?.intent_score ?? null;
+  const evidenceScore = fsb?.totals?.evidence_score ?? null;
+  const breakdownSummary = fsb?.summary ?? null;
+  const policyReason = fsb?.final_policy_reason ?? null;
+  const hasBreakdown = hasFsb;
 
-  const intentItems: FinalBreakdownComponent[] = hasFsb ? fsbComps.filter((c) => c.category === "Intent") : [];
-  const evidenceItems: FinalBreakdownComponent[] = hasFsb ? fsbComps.filter((c) => c.category === "Evidence") : [];
-  const legacyIntentItems: ScoreComponent[] = !hasFsb ? legacyComps.filter((c) => c.label.startsWith("intent:")) : [];
-  const legacyEvidenceItems: ScoreComponent[] = !hasFsb ? legacyComps.filter((c) => c.label.startsWith("evidence:")) : [];
+  const intentItems: FinalBreakdownComponent[] = fsbComps.filter((c) => c.category === "Intent");
+  const evidenceItems: FinalBreakdownComponent[] = fsbComps.filter((c) => c.category === "Evidence");
 
   const icpFit = sb?.icp_fit ?? sb?.base_scoring_context?.icp_fit;
   const baseComps: BaseComponent[] = sb?.base_scoring_context?.components ?? [];
@@ -642,134 +639,70 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
 
                     {bdOpen && (
                       <div className="p-5 space-y-5">
-                        {hasFsb ? (
-                          <>
-                            {/* Intent group — new final_score_breakdown format */}
-                            {intentItems.length > 0 && (
-                              <div>
-                                <div className="flex items-center justify-between mb-2">
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-orange-400" />
-                                    <span className="text-xs font-bold text-orange-600 uppercase tracking-wide">Intent</span>
-                                  </div>
-                                  <span className="text-xs font-bold text-slate-700 tabular-nums">{intentScore ?? "—"} / 70</span>
-                                </div>
-                                <div className="h-2 bg-orange-100 rounded-full overflow-hidden mb-3">
-                                  <div className="h-full bg-orange-400 rounded-full transition-all duration-700" style={{ width: `${Math.min(100, ((intentScore ?? 0) / 70) * 100)}%` }} />
-                                </div>
-                                <div className="space-y-3">
-                                  {intentItems.map((comp, i) => (
-                                    <div key={i} className="flex-1 min-w-0">
-                                      <div className="flex items-center justify-between mb-1">
-                                        <span className="text-xs font-semibold text-slate-700">{comp.component}</span>
-                                        <div className="flex items-center gap-1.5">
-                                          <span className={`text-xs font-bold tabular-nums ${comp.points > 0 ? "text-emerald-600" : "text-slate-400"}`}>+{comp.points}</span>
-                                          <span className="text-[10px] text-slate-300 tabular-nums">{comp.formula}</span>
-                                        </div>
-                                      </div>
-                                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mb-1">
-                                        <div className="h-full bg-orange-300 rounded-full" style={{ width: `${Math.min(100, (comp.points / 20) * 100)}%` }} />
-                                      </div>
-                                      <p className="text-[11px] text-slate-400 leading-snug">{comp.reason}</p>
-                                    </div>
-                                  ))}
-                                </div>
+                        {/* Intent group — final_score_breakdown */}
+                        {intentItems.length > 0 && (
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-2 h-2 rounded-full bg-orange-400" />
+                                <span className="text-xs font-bold text-orange-600 uppercase tracking-wide">Intent</span>
                               </div>
-                            )}
+                              <span className="text-xs font-bold text-slate-700 tabular-nums">{intentScore ?? "—"} / 70</span>
+                            </div>
+                            <div className="h-2 bg-orange-100 rounded-full overflow-hidden mb-3">
+                              <div className="h-full bg-orange-400 rounded-full transition-all duration-700" style={{ width: `${Math.min(100, ((intentScore ?? 0) / 70) * 100)}%` }} />
+                            </div>
+                            <div className="space-y-3">
+                              {intentItems.map((comp, i) => (
+                                <div key={i} className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs font-semibold text-slate-700">{comp.component}</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`text-xs font-bold tabular-nums ${comp.points > 0 ? "text-emerald-600" : "text-slate-400"}`}>+{comp.points}</span>
+                                      <span className="text-[10px] text-slate-300 tabular-nums">{comp.formula}</span>
+                                    </div>
+                                  </div>
+                                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mb-1">
+                                    <div className="h-full bg-orange-300 rounded-full" style={{ width: `${Math.min(100, (comp.points / 20) * 100)}%` }} />
+                                  </div>
+                                  <p className="text-[11px] text-slate-400 leading-snug">{comp.reason}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
-                            {/* Evidence group — new format */}
-                            {evidenceItems.length > 0 && (
-                              <div className={intentItems.length > 0 ? "pt-4 border-t border-slate-100" : ""}>
-                                <div className="flex items-center justify-between mb-2">
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-teal-400" />
-                                    <span className="text-xs font-bold text-teal-600 uppercase tracking-wide">Evidence</span>
-                                  </div>
-                                  <span className="text-xs font-bold text-slate-700 tabular-nums">{evidenceScore ?? "—"} / 30</span>
-                                </div>
-                                <div className="h-2 bg-teal-100 rounded-full overflow-hidden mb-3">
-                                  <div className="h-full bg-teal-400 rounded-full transition-all duration-700" style={{ width: `${Math.min(100, ((evidenceScore ?? 0) / 30) * 100)}%` }} />
-                                </div>
-                                <div className="space-y-3">
-                                  {evidenceItems.map((comp, i) => (
-                                    <div key={i}>
-                                      <div className="flex items-center justify-between mb-1">
-                                        <span className="text-xs font-semibold text-slate-700">{comp.component}</span>
-                                        <div className="flex items-center gap-1.5">
-                                          <span className={`text-xs font-bold tabular-nums ${comp.points > 0 ? "text-emerald-600" : "text-slate-400"}`}>+{comp.points}</span>
-                                          <span className="text-[10px] text-slate-300 tabular-nums">{comp.formula}</span>
-                                        </div>
-                                      </div>
-                                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mb-1">
-                                        <div className="h-full bg-teal-300 rounded-full" style={{ width: `${Math.min(100, (comp.points / 15) * 100)}%` }} />
-                                      </div>
-                                      <p className="text-[11px] text-slate-400 leading-snug">{comp.reason}</p>
-                                    </div>
-                                  ))}
-                                </div>
+                        {/* Evidence group — final_score_breakdown */}
+                        {evidenceItems.length > 0 && (
+                          <div className={intentItems.length > 0 ? "pt-4 border-t border-slate-100" : ""}>
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-2 h-2 rounded-full bg-teal-400" />
+                                <span className="text-xs font-bold text-teal-600 uppercase tracking-wide">Evidence</span>
                               </div>
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            {/* Legacy score_breakdown format */}
-                            {legacyIntentItems.length > 0 && (
-                              <div>
-                                <div className="flex items-center justify-between mb-2">
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-orange-400" />
-                                    <span className="text-xs font-bold text-orange-600 uppercase tracking-wide">Intent</span>
-                                  </div>
-                                  <span className="text-xs font-bold text-slate-700 tabular-nums">{intentScore ?? "—"} / 70</span>
-                                </div>
-                                <div className="h-2 bg-orange-100 rounded-full overflow-hidden mb-3">
-                                  <div className="h-full bg-orange-400 rounded-full transition-all duration-700" style={{ width: `${Math.min(100, ((intentScore ?? 0) / 70) * 100)}%` }} />
-                                </div>
-                                <div className="space-y-2.5">
-                                  {legacyIntentItems.map((comp, i) => (
-                                    <div key={i} className="flex-1 min-w-0">
-                                      <div className="flex items-center justify-between mb-1">
-                                        <span className="text-xs font-semibold text-slate-700 capitalize">{comp.label.replace("intent: ", "")}</span>
-                                        <span className={`text-xs font-bold tabular-nums ${comp.value > 0 ? "text-emerald-600" : "text-slate-400"}`}>+{comp.value}</span>
-                                      </div>
-                                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mb-1">
-                                        <div className="h-full bg-orange-300 rounded-full" style={{ width: `${Math.min(100, (comp.value / 20) * 100)}%` }} />
-                                      </div>
-                                      <p className="text-[11px] text-slate-400 leading-snug">{comp.reason}</p>
+                              <span className="text-xs font-bold text-slate-700 tabular-nums">{evidenceScore ?? "—"} / 30</span>
+                            </div>
+                            <div className="h-2 bg-teal-100 rounded-full overflow-hidden mb-3">
+                              <div className="h-full bg-teal-400 rounded-full transition-all duration-700" style={{ width: `${Math.min(100, ((evidenceScore ?? 0) / 30) * 100)}%` }} />
+                            </div>
+                            <div className="space-y-3">
+                              {evidenceItems.map((comp, i) => (
+                                <div key={i}>
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs font-semibold text-slate-700">{comp.component}</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`text-xs font-bold tabular-nums ${comp.points > 0 ? "text-emerald-600" : "text-slate-400"}`}>+{comp.points}</span>
+                                      <span className="text-[10px] text-slate-300 tabular-nums">{comp.formula}</span>
                                     </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            {legacyEvidenceItems.length > 0 && (
-                              <div className={legacyIntentItems.length > 0 ? "pt-4 border-t border-slate-100" : ""}>
-                                <div className="flex items-center justify-between mb-2">
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-teal-400" />
-                                    <span className="text-xs font-bold text-teal-600 uppercase tracking-wide">Evidence</span>
                                   </div>
-                                  <span className="text-xs font-bold text-slate-700 tabular-nums">{evidenceScore ?? "—"} / 30</span>
+                                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mb-1">
+                                    <div className="h-full bg-teal-300 rounded-full" style={{ width: `${Math.min(100, (comp.points / 15) * 100)}%` }} />
+                                  </div>
+                                  <p className="text-[11px] text-slate-400 leading-snug">{comp.reason}</p>
                                 </div>
-                                <div className="h-2 bg-teal-100 rounded-full overflow-hidden mb-3">
-                                  <div className="h-full bg-teal-400 rounded-full transition-all duration-700" style={{ width: `${Math.min(100, ((evidenceScore ?? 0) / 30) * 100)}%` }} />
-                                </div>
-                                <div className="space-y-2.5">
-                                  {legacyEvidenceItems.map((comp, i) => (
-                                    <div key={i}>
-                                      <div className="flex items-center justify-between mb-1">
-                                        <span className="text-xs font-semibold text-slate-700 capitalize">{comp.label.replace("evidence: ", "")}</span>
-                                        <span className={`text-xs font-bold tabular-nums ${comp.value > 0 ? "text-emerald-600" : "text-slate-400"}`}>+{comp.value}</span>
-                                      </div>
-                                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mb-1">
-                                        <div className="h-full bg-teal-300 rounded-full" style={{ width: `${Math.min(100, (comp.value / 15) * 100)}%` }} />
-                                      </div>
-                                      <p className="text-[11px] text-slate-400 leading-snug">{comp.reason}</p>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </>
+                              ))}
+                            </div>
+                          </div>
                         )}
 
                         {(breakdownSummary || policyReason) && (
@@ -1281,9 +1214,9 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
               )}
 
               {/* All components mini bars */}
-              {(hasFsb ? fsbComps : legacyComps).length > 0 && (
+              {fsbComps.length > 0 && (
                 <div className="space-y-2 border-t border-slate-100 pt-4">
-                  {hasFsb ? fsbComps.map((comp, i) => {
+                  {fsbComps.map((comp, i) => {
                     const isIntent = comp.category === "Intent";
                     const barColor = isIntent ? "bg-orange-300" : "bg-teal-300";
                     const maxVal = isIntent ? 20 : 15;
@@ -1294,26 +1227,6 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                           <span className="text-[10px] text-slate-500 truncate max-w-[130px]">{comp.component}</span>
                           <span className={`text-[10px] font-bold tabular-nums ${comp.points > 0 ? "text-slate-700" : "text-slate-300"}`}>
                             +{comp.points}
-                          </span>
-                        </div>
-                        <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
-                          <div className={`h-full ${barColor} rounded-full transition-all duration-700`} style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    );
-                  }) : legacyComps.map((comp, i) => {
-                    const isIntent = comp.label.startsWith("intent:");
-                    const barColor = isIntent ? "bg-orange-300" : "bg-teal-300";
-                    const maxVal = isIntent ? 20 : 15;
-                    const pct = Math.min(100, (comp.value / maxVal) * 100);
-                    return (
-                      <div key={i}>
-                        <div className="flex items-center justify-between mb-0.5">
-                          <span className="text-[10px] text-slate-500 capitalize truncate max-w-[130px]">
-                            {comp.label.replace(/^(intent|evidence):\s*/, "")}
-                          </span>
-                          <span className={`text-[10px] font-bold tabular-nums ${comp.value > 0 ? "text-slate-700" : "text-slate-300"}`}>
-                            +{comp.value}
                           </span>
                         </div>
                         <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
