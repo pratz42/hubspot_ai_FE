@@ -363,6 +363,10 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
   const [commError, setCommError] = useState("");
   const [bdOpen, setBdOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [showConvertModal, setShowConvertModal] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const [convertedDealId, setConvertedDealId] = useState<number | null>(null);
+  const [convertError, setConvertError] = useState("");
 
   const reloadLead = useCallback(async () => {
     if (!leadId) return;
@@ -402,6 +406,21 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
       await reloadLead();
     } catch { /* ignore */ } finally {
       setRetrying(false);
+    }
+  }
+
+  async function handleConvertToDeal() {
+    if (!leadId || converting) return;
+    setConverting(true);
+    setConvertError("");
+    try {
+      const res = await API.post(`/leads/${leadId}/convert-to-deal`);
+      setConvertedDealId(res.data.deal_id);
+      setShowConvertModal(false);
+    } catch (err) {
+      setConvertError(getErrorMessage(err, "Failed to convert lead to deal."));
+    } finally {
+      setConverting(false);
     }
   }
 
@@ -482,6 +501,7 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
   const parsedKnowledge = parseKnowledge(lead.knowledge);
 
   return (
+    <>
     <div className="p-6 max-w-7xl">
       {/* Back */}
       <Link href="/leads">
@@ -547,9 +567,21 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
               </a>
             )}
             <StrategyBriefActionButton brief={brief} scoringStatus={effectiveStatus} />
-            <Button size="sm" className="bg-orange-600 hover:bg-orange-700 h-8 text-xs font-semibold">
-              <Zap className="w-3.5 h-3.5 mr-1.5" />Convert to Deal
-            </Button>
+            {convertedDealId ? (
+              <Link href={`/deals/${convertedDealId}`}>
+                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs font-semibold">
+                  <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />View Deal
+                </Button>
+              </Link>
+            ) : (
+              <Button
+                size="sm"
+                className="bg-orange-600 hover:bg-orange-700 h-8 text-xs font-semibold"
+                onClick={() => setShowConvertModal(true)}
+              >
+                <Zap className="w-3.5 h-3.5 mr-1.5" />Convert to Deal
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -1314,5 +1346,84 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
         </div>
       </div>
     </div>
+
+    {/* ── Convert to Deal Modal ── */}
+    {showConvertModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div
+          className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+          onClick={() => { if (!converting) { setShowConvertModal(false); setConvertError(""); } }}
+        />
+        <div className="relative bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4 overflow-hidden">
+          <div className={`h-1.5 bg-gradient-to-r ${grad}`} />
+          <div className="p-6">
+            <div className="flex items-start gap-4 mb-5">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center flex-shrink-0 shadow-md">
+                <Zap className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-slate-900">Convert to Deal</h2>
+                <p className="text-sm text-slate-500 mt-0.5">A new deal will be created from this lead.</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 mb-5 space-y-2.5">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Lead</span>
+                <span className="text-sm font-semibold text-slate-800">{lead.name}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Company</span>
+                <span className="text-sm text-slate-700">{lead.company}</span>
+              </div>
+              {lead.deal_size && (
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Deal Value</span>
+                  <span className="text-sm font-semibold text-emerald-700">{formatDeal(lead.deal_size)}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-start gap-2.5 bg-orange-50 border border-orange-200 rounded-lg px-3.5 py-3 mb-5">
+              <AlertCircle className="w-4 h-4 text-orange-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-orange-700 leading-relaxed">
+                The deal will be placed at the first stage of your default pipeline and inherit this lead&apos;s contact and company associations.
+              </p>
+            </div>
+
+            {convertError && (
+              <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3.5 py-3 mb-4">
+                <XCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-red-700">{convertError}</p>
+              </div>
+            )}
+
+            <div className="flex gap-2.5">
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1 h-9 text-sm border-slate-200"
+                onClick={() => { setShowConvertModal(false); setConvertError(""); }}
+                disabled={converting}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="flex-1 h-9 text-sm bg-orange-600 hover:bg-orange-700 font-semibold"
+                onClick={handleConvertToDeal}
+                disabled={converting}
+              >
+                {converting
+                  ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Converting…</>
+                  : <><Zap className="w-4 h-4 mr-2" />Confirm Convert</>
+                }
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

@@ -17,10 +17,13 @@ import {
   Phone,
   StickyNote,
   PhoneCall,
+  Pencil,
+  UserCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import API from "@/lib/api";
+import { EditDealDrawer } from "@/components/deals/EditDealDrawer";
 
 interface Contact { id: number; first_name: string; last_name?: string; email: string; title?: string; }
 interface Company { id: number; name: string; domain?: string; industry?: string; }
@@ -30,6 +33,7 @@ interface Deal {
   name: string;
   amount?: number;
   close_date?: string;
+  stage_id?: number;
   stage_name?: string;
   probability?: number;
   owner?: string;
@@ -38,6 +42,24 @@ interface Deal {
   created_at: string;
   contacts: Contact[];
   companies: Company[];
+}
+
+interface UserRecord {
+  user_id: string;
+  email: string;
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function resolveOwner(owner: string | undefined, users: UserRecord[]): string {
+  if (!owner) return "—";
+  if (isUuid(owner)) {
+    const match = users.find((u) => u.user_id === owner);
+    return match ? match.email : "—";
+  }
+  return owner;
 }
 
 interface Activity {
@@ -79,6 +101,8 @@ export default function DealDetailPage() {
   const [deal, setDeal] = useState<Deal | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [showEdit, setShowEdit] = useState(false);
 
   // Log activity
   const [actType, setActType] = useState<"note" | "call" | "email" | "meeting">("note");
@@ -91,9 +115,11 @@ export default function DealDetailPage() {
     Promise.all([
       API.get(`/deals/${dealId}`),
       API.get(`/deals/${dealId}/activities`),
-    ]).then(([dealRes, actRes]) => {
+      API.get("/auth/users"),
+    ]).then(([dealRes, actRes, usersRes]) => {
       setDeal(dealRes.data);
       setActivities(Array.isArray(actRes.data) ? actRes.data : []);
+      setUsers(Array.isArray(usersRes.data) ? usersRes.data : []);
     }).finally(() => setLoading(false));
   }, [dealId]);
 
@@ -156,11 +182,21 @@ export default function DealDetailPage() {
               )}
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-2xl font-bold text-emerald-700">{formatAmount(deal.amount)}</p>
-            {deal.probability !== undefined && (
-              <p className="text-xs text-slate-400 mt-0.5">{deal.probability}% probability</p>
-            )}
+          <div className="flex items-start gap-3">
+            <div className="text-right">
+              <p className="text-2xl font-bold text-emerald-700">{formatAmount(deal.amount)}</p>
+              {deal.probability !== undefined && (
+                <p className="text-xs text-slate-400 mt-0.5">{deal.probability}% probability</p>
+              )}
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs font-semibold border-slate-200 hover:border-orange-300 hover:text-orange-600 flex-shrink-0"
+              onClick={() => setShowEdit(true)}
+            >
+              <Pencil className="w-3.5 h-3.5 mr-1.5" />Edit
+            </Button>
           </div>
         </div>
 
@@ -176,7 +212,10 @@ export default function DealDetailPage() {
           </div>
           <div>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Deal Owner</p>
-            <p className="text-sm text-slate-700">{deal.owner ?? "—"}</p>
+            <div className="flex items-center gap-1.5">
+              <UserCircle className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+              <p className="text-sm text-slate-700 truncate">{resolveOwner(deal.owner, users)}</p>
+            </div>
           </div>
           <div>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Amount</p>
@@ -324,6 +363,17 @@ export default function DealDetailPage() {
           </div>
         </div>
       </div>
+
+      {showEdit && deal && (
+        <EditDealDrawer
+          deal={deal}
+          onClose={() => setShowEdit(false)}
+          onSaved={(updated) => {
+            setDeal((prev) => prev ? { ...prev, ...updated } : prev);
+            setShowEdit(false);
+          }}
+        />
+      )}
     </div>
   );
 }
