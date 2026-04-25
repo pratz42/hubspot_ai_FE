@@ -462,7 +462,7 @@ export default function ContactDetail({ params }: { params: Promise<{ id: string
             </div>
           )}
           {/* AI Snapshot */}
-          <AISummaryCard contactId={contact.id} />
+          <AISummaryCard contactId={contact.id} scoringStatus={effectiveStatus} />
         </div>
 
         {/* RIGHT: AI Intelligence + Records */}
