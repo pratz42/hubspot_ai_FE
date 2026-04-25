@@ -36,7 +36,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Upload,
+  Pencil,
 } from "lucide-react";
+import { EditDealDrawer } from "@/components/deals/EditDealDrawer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import API from "@/lib/api";
@@ -113,7 +115,7 @@ function formatAmount(value?: number) {
 
 // ── Deal Card ────────────────────────────────────────────────────────────────
 
-function DealCard({ deal, overlay = false }: { deal: Deal; overlay?: boolean }) {
+function DealCard({ deal, overlay = false, onEdit }: { deal: Deal; overlay?: boolean; onEdit?: () => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: deal.id });
   const grad = avatarGradient(deal.name);
   const primaryCompany = deal.companies?.[0];
@@ -148,14 +150,25 @@ function DealCard({ deal, overlay = false }: { deal: Deal; overlay?: boolean }) 
       <div className="p-3">
         <div className="flex items-start justify-between gap-2 mb-2">
           <a href={`/deals/${deal.id}`} onClick={(e) => e.stopPropagation()} className="text-sm font-semibold text-slate-900 hover:text-orange-600 leading-tight line-clamp-2 flex-1 transition-colors">{deal.name}</a>
-          <button
-            {...attributes}
-            {...listeners}
-            className="p-1 text-slate-300 hover:text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <GripVertical className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+            {onEdit && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                className="p-1 text-slate-300 hover:text-orange-500 transition-colors"
+                title="Edit deal"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+            )}
+            <button
+              {...attributes}
+              {...listeners}
+              className="p-1 text-slate-300 hover:text-slate-500 transition-colors"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <GripVertical className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         {deal.amount ? (
@@ -212,11 +225,13 @@ function KanbanColumn({
   deals,
   limit,
   onShowMore,
+  onEditDeal,
 }: {
   stage: PipelineStage;
   deals: Deal[];
   limit: number;
   onShowMore: () => void;
+  onEditDeal: (deal: Deal) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `stage-${stage.id}` });
   const stageColor = STAGE_COLORS[stage.name] ?? "text-slate-600";
@@ -260,7 +275,7 @@ function KanbanColumn({
               <p className="text-xs text-slate-400">No deals</p>
             </div>
           ) : (
-            visibleDeals.map((deal) => <DealCard key={deal.id} deal={deal} />)
+            visibleDeals.map((deal) => <DealCard key={deal.id} deal={deal} onEdit={() => onEditDeal(deal)} />)
           )}
         </SortableContext>
         {hiddenCount > 0 && (
@@ -553,6 +568,7 @@ export default function DealsPage() {
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [editDeal, setEditDeal] = useState<Deal | null>(null);
   const [columnLimits, setColumnLimits] = useState<Record<number, number>>({});
   const { toast } = useToast();
 
@@ -797,6 +813,7 @@ export default function DealsPage() {
                 deals={groups[stage.id] ?? []}
                 limit={columnLimits[stage.id] ?? COLUMN_PAGE_SIZE}
                 onShowMore={() => setColumnLimits((prev) => ({ ...prev, [stage.id]: (prev[stage.id] ?? COLUMN_PAGE_SIZE) + COLUMN_PAGE_SIZE }))}
+                onEditDeal={setEditDeal}
               />
             ))}
           </div>
@@ -818,6 +835,23 @@ export default function DealsPage() {
           stages={stages}
           onClose={() => setAddOpen(false)}
           onCreated={fetchData}
+        />
+      )}
+
+      {editDeal && (
+        <EditDealDrawer
+          deal={editDeal}
+          onClose={() => setEditDeal(null)}
+          onSaved={(updated) => {
+            setDeals((prev) =>
+              prev.map((d) =>
+                d.id === updated.id
+                  ? { ...d, ...updated, stage_id: (updated as Deal).stage_id ?? d.stage_id }
+                  : d
+              )
+            );
+            setEditDeal(null);
+          }}
         />
       )}
 
