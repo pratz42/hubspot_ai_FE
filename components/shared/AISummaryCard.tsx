@@ -15,6 +15,7 @@
 import {
   Activity, AlertCircle, Lightbulb, Loader2,
   RefreshCw, Sparkles, Target, TrendingUp,
+  Clock, Brain, XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAISummary, type SummaryCard } from "@/hooks/useAISummary";
@@ -22,6 +23,8 @@ import { useAISummary, type SummaryCard } from "@/hooks/useAISummary";
 interface Props {
   leadId?: number | null;
   contactId?: number | null;
+  /** Pass the live scoring status so the button is gated until scoring is done. */
+  scoringStatus?: string;
 }
 
 // Visual config for each of the 4 cards the API always returns in order.
@@ -96,9 +99,93 @@ function ResultCard({ card, index }: { card: SummaryCard; index: number }) {
   );
 }
 
+/* ── Scoring-gated idle state ─────────────────────────────────────────────── */
+
+function ScoringBlockedState({ status }: { status: string }) {
+  if (status === "pending") {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-start gap-3 py-1">
+          <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center flex-shrink-0 animate-pulse">
+            <Clock className="w-4 h-4 text-slate-400" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-slate-600">Scoring queued</p>
+            <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+              AI snapshot will be available once the scoring pipeline completes.
+            </p>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          disabled
+          className="w-full h-8 text-xs bg-slate-100 text-slate-400 border-0 cursor-not-allowed"
+        >
+          <Clock className="w-3.5 h-3.5 mr-1.5" />
+          Waiting for score…
+        </Button>
+      </div>
+    );
+  }
+
+  if (status === "scoring") {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-start gap-3 py-1">
+          <div className="w-8 h-8 rounded-full bg-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0">
+            <Brain className="w-4 h-4 text-blue-500 animate-pulse" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-blue-700">AI scoring in progress</p>
+            <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+              Snapshot will be available automatically once the analysis is done.
+            </p>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          disabled
+          className="w-full h-8 text-xs bg-blue-50 text-blue-400 border border-blue-100 cursor-not-allowed"
+        >
+          <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+          Scoring in progress…
+        </Button>
+      </div>
+    );
+  }
+
+  if (status === "failed") {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-start gap-3 py-1">
+          <div className="w-8 h-8 rounded-full bg-red-50 border border-red-200 flex items-center justify-center flex-shrink-0">
+            <XCircle className="w-4 h-4 text-red-400" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-red-600">Scoring failed</p>
+            <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+              Retry AI scoring above — the snapshot requires score data to generate insights.
+            </p>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          disabled
+          className="w-full h-8 text-xs bg-red-50 text-red-300 border border-red-100 cursor-not-allowed"
+        >
+          <XCircle className="w-3.5 h-3.5 mr-1.5" />
+          Score required
+        </Button>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 /* ── Main component ───────────────────────────────────────────────────────── */
 
-export function AISummaryCard({ leadId, contactId }: Props) {
+export function AISummaryCard({ leadId, contactId, scoringStatus }: Props) {
   const { state, summarize, reset } = useAISummary({
     lead_id: leadId,
     contact_id: contactId,
@@ -106,6 +193,9 @@ export function AISummaryCard({ leadId, contactId }: Props) {
 
   const isDone = state.phase === "done";
   const isLoading = state.phase === "loading";
+  const scoringIncomplete =
+    scoringStatus !== undefined &&
+    scoringStatus !== "scored";
 
   return (
     <div className="rounded-xl border border-violet-100 bg-white shadow-sm overflow-hidden">
@@ -132,8 +222,13 @@ export function AISummaryCard({ leadId, contactId }: Props) {
       </div>
 
       <div className="p-4">
-        {/* ── Idle ── */}
-        {state.phase === "idle" && (
+        {/* ── Idle: scoring not done yet ── */}
+        {state.phase === "idle" && scoringIncomplete && (
+          <ScoringBlockedState status={scoringStatus!} />
+        )}
+
+        {/* ── Idle: ready to generate ── */}
+        {state.phase === "idle" && !scoringIncomplete && (
           <div className="space-y-3">
             <p className="text-xs text-slate-400 leading-relaxed">
               Get a 4-point AI snapshot covering current status, opportunity,

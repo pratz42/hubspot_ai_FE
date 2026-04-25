@@ -74,6 +74,7 @@ interface CampaignListItem {
   status: string;
   orchestration_state?: string;
   approval_status?: string;
+  approval_owner?: string;
   plan_data?: Record<string, unknown>;
   created_at: string;
 }
@@ -107,6 +108,11 @@ interface AISummary {
   overall_rating: "excellent" | "good" | "needs_improvement";
 }
 
+interface UserOption {
+  user_id: string;
+  email: string;
+}
+
 interface CampaignResult {
   campaign_id: number;
   resolve_summary: {
@@ -121,7 +127,7 @@ interface CampaignResult {
     report: Array<{ asset_id: number; sequence_step: number; qa_score: number; qa_notes: string }>;
   };
   status: {
-    campaign: Record<string, unknown>;
+    campaign: { name?: string; approval_owner?: string; [key: string]: unknown };
     targets: Array<{ recipient_status: string; resolved_email?: string }>;
     assets: GeneratedAsset[];
   };
@@ -406,11 +412,36 @@ function StrategyCard({ strategy, type }: { strategy: Record<string, unknown>; t
 
 // ─── Message Card ─────────────────────────────────────────────────────────────
 
-function MessageCard({ asset, isEmail }: { asset: GeneratedAsset; isEmail: boolean }) {
+function assetStatusBadge(status: string) {
+  if (status === "approved") return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700 border border-emerald-200 flex-shrink-0"><CheckCircle2 className="w-3 h-3" />Approved</span>;
+  if (status === "rejected") return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 border border-red-200 flex-shrink-0"><XCircle className="w-3 h-3" />Rejected</span>;
+  return null;
+}
+
+function MessageCard({
+  asset,
+  isEmail,
+  effectiveStatus,
+  isApprovalOwner,
+  isBulkDecided,
+  approvingAssetId,
+  onApproveAsset,
+}: {
+  asset: GeneratedAsset;
+  isEmail: boolean;
+  effectiveStatus: string;
+  isApprovalOwner: boolean;
+  isBulkDecided: boolean;
+  approvingAssetId: number | null;
+  onApproveAsset: (assetId: number, decision: "approved" | "rejected") => void;
+}) {
   const [open, setOpen] = useState(false);
   const score = asset.qa_score ?? 100;
+  const isApproving = approvingAssetId === asset.id;
+  const canAct = isApprovalOwner && !isBulkDecided;
+
   return (
-    <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+    <div className={`rounded-lg border bg-white overflow-hidden transition-colors ${effectiveStatus === "approved" ? "border-emerald-200" : effectiveStatus === "rejected" ? "border-red-200" : "border-slate-200"}`}>
       <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors text-left">
         <div className="flex-shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-orange-400 to-violet-500 flex items-center justify-center text-xs font-bold text-white">
           {asset.sequence_step}
@@ -421,6 +452,7 @@ function MessageCard({ asset, isEmail }: { asset: GeneratedAsset; isEmail: boole
             : <p className="text-sm font-medium text-slate-800 truncate">{asset.body.slice(0, 65)}…</p>}
         </div>
         <div className={`text-xs font-semibold px-2 py-0.5 rounded-full border flex-shrink-0 ${qaColor(score)}`}>{score}</div>
+        {assetStatusBadge(effectiveStatus)}
         {open ? <ChevronUp className="w-4 h-4 text-slate-400 flex-shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />}
       </button>
       {open && (
@@ -449,6 +481,33 @@ function MessageCard({ asset, isEmail }: { asset: GeneratedAsset; isEmail: boole
               <p className="text-xs text-amber-700">{asset.qa_notes}</p>
             </div>
           )}
+
+          {/* Per-message approval actions */}
+          {canAct && (
+            <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => onApproveAsset(asset.id, "approved")}
+                disabled={isApproving}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-60 ${effectiveStatus === "approved" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-white text-slate-600 border-slate-200 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200"}`}
+              >
+                {isApproving ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsUp className="w-3 h-3" />}
+                Approve
+              </button>
+              <button
+                onClick={() => onApproveAsset(asset.id, "rejected")}
+                disabled={isApproving}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-60 ${effectiveStatus === "rejected" ? "bg-red-100 text-red-700 border-red-200" : "bg-white text-slate-600 border-slate-200 hover:bg-red-50 hover:text-red-700 hover:border-red-200"}`}
+              >
+                <ThumbsDown className="w-3 h-3" />
+                Reject
+              </button>
+              {effectiveStatus !== "pending" && (
+                <span className={`ml-auto text-xs font-medium ${effectiveStatus === "approved" ? "text-emerald-600" : "text-red-600"}`}>
+                  {effectiveStatus === "approved" ? "Approved" : "Rejected"}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -457,10 +516,25 @@ function MessageCard({ asset, isEmail }: { asset: GeneratedAsset; isEmail: boole
 
 // ─── Recipient Group ─────────────────────────────────────────────────────────
 
-function RecipientGroup({ email, assets, isEmail }: { email: string; assets: GeneratedAsset[]; isEmail: boolean }) {
+function RecipientGroup({
+  email, assets, isEmail, assetApprovals, isApprovalOwner, isBulkDecided, approvingAssetId, onApproveAsset,
+}: {
+  email: string;
+  assets: GeneratedAsset[];
+  isEmail: boolean;
+  assetApprovals: Record<number, string>;
+  isApprovalOwner: boolean;
+  isBulkDecided: boolean;
+  approvingAssetId: number | null;
+  onApproveAsset: (assetId: number, decision: "approved" | "rejected") => void;
+}) {
   const [expanded, setExpanded] = useState(true);
   const name = assets[0]?.recipient_name || email.split("@")[0];
   const avgQa = assets.length ? Math.round(assets.reduce((s, a) => s + (a.qa_score ?? 100), 0) / assets.length) : 100;
+  const effectiveStatuses = assets.map((a) => assetApprovals[a.id] ?? a.approval_status);
+  const approvedCount = effectiveStatuses.filter((s) => s === "approved").length;
+  const rejectedCount = effectiveStatuses.filter((s) => s === "rejected").length;
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
       <button onClick={() => setExpanded((v) => !v)} className="w-full flex items-center gap-3 px-5 py-4 hover:bg-slate-50 transition-colors text-left">
@@ -473,13 +547,26 @@ function RecipientGroup({ email, assets, isEmail }: { email: string; assets: Gen
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <span className="text-xs text-slate-500 font-medium">{assets.length} msg{assets.length !== 1 ? "s" : ""}</span>
+          {approvedCount > 0 && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">{approvedCount} ✓</span>}
+          {rejectedCount > 0 && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200">{rejectedCount} ✗</span>}
           <div className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${qaColor(avgQa)}`}>avg {avgQa}</div>
           {expanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
         </div>
       </button>
       {expanded && (
         <div className="px-5 pb-5 space-y-2 border-t border-slate-100 pt-4">
-          {assets.map((a) => <MessageCard key={a.id} asset={a} isEmail={isEmail} />)}
+          {assets.map((a) => (
+            <MessageCard
+              key={a.id}
+              asset={a}
+              isEmail={isEmail}
+              effectiveStatus={assetApprovals[a.id] ?? a.approval_status}
+              isApprovalOwner={isApprovalOwner}
+              isBulkDecided={isBulkDecided}
+              approvingAssetId={approvingAssetId}
+              onApproveAsset={onApproveAsset}
+            />
+          ))}
         </div>
       )}
     </div>
@@ -650,6 +737,115 @@ function AISummaryPanel({
   );
 }
 
+// ─── Approval Owner Combobox ─────────────────────────────────────────────────
+
+function ApprovalOwnerCombobox({
+  value,
+  onChange,
+  users,
+  loading,
+  error,
+}: {
+  value: string;
+  onChange: (email: string) => void;
+  users: UserOption[];
+  loading: boolean;
+  error: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(value);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { setQuery(value); }, [value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery(value);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, value]);
+
+  const filtered = query
+    ? users.filter((u) => u.email.toLowerCase().includes(query.toLowerCase()))
+    : users;
+
+  const isSelected = (email: string) => value === email;
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="relative">
+        <Input
+          placeholder={loading ? "Loading users…" : "Search and select a user…"}
+          value={query}
+          disabled={loading}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            onChange("");
+            if (!open) setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(e) => { if (e.key === "Escape") { setOpen(false); setQuery(value); } }}
+          className={`border-slate-200 focus:ring-orange-500/30 focus:border-orange-400 pr-8 ${value ? "text-slate-900 font-medium" : ""}`}
+        />
+        <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
+          {loading
+            ? <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
+            : value
+              ? <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              : <ChevronDown className="w-4 h-4 text-slate-400" />}
+        </div>
+      </div>
+
+      {open && !loading && (
+        <div className="absolute z-50 top-full mt-1.5 w-full rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden">
+          {error && (
+            <div className="flex items-center gap-2 px-4 py-3 text-sm text-red-600 bg-red-50">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              {error}
+            </div>
+          )}
+          {!error && filtered.length === 0 && (
+            <div className="flex flex-col items-center gap-1 px-4 py-6 text-center">
+              <Users className="w-5 h-5 text-slate-300" />
+              <p className="text-sm text-slate-400">No users match "{query}"</p>
+            </div>
+          )}
+          {!error && filtered.length > 0 && (
+            <div className="max-h-52 overflow-y-auto divide-y divide-slate-50">
+              {filtered.map((u) => {
+                const sel = isSelected(u.email);
+                const nameHint = u.email.split("@")[0].replace(/[._]/g, " ");
+                return (
+                  <button
+                    key={u.user_id}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => { onChange(u.email); setQuery(u.email); setOpen(false); }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${sel ? "bg-orange-50" : "hover:bg-slate-50"}`}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-orange-400 to-violet-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                      {initials(nameHint)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-900 truncate capitalize">{nameHint}</p>
+                      <p className="text-xs text-slate-400 truncate">{u.email}</p>
+                    </div>
+                    {sel && <CheckCircle2 className="w-4 h-4 text-orange-500 flex-shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Campaign Results Body (shared by "results" and "view") ──────────────────
 
 function CampaignResultsBody({
@@ -662,7 +858,12 @@ function CampaignResultsBody({
   qaPassed,
   assets,
   existingApproval,
+  approvalOwner,
+  currentUserEmail,
+  assetApprovals,
+  approvingAssetId,
   onApprove,
+  onAssetApprove,
   approving,
   approved,
 }: {
@@ -675,13 +876,21 @@ function CampaignResultsBody({
   qaPassed: boolean;
   assets: GeneratedAsset[];
   existingApproval?: string | null;
+  approvalOwner?: string;
+  currentUserEmail?: string;
+  assetApprovals: Record<number, string>;
+  approvingAssetId: number | null;
   onApprove: (decision: "approved" | "rejected") => void;
+  onAssetApprove: (assetId: number, decision: "approved" | "rejected") => void;
   approving: boolean;
   approved: boolean | null;
 }) {
   const alreadyDecided = existingApproval === "approved" || existingApproval === "rejected";
   const showApproved = approved !== null ? approved : existingApproval === "approved";
   const isDecided = approved !== null || alreadyDecided;
+  const isApprovalOwner = !approvalOwner || !currentUserEmail
+    ? false
+    : approvalOwner.toLowerCase() === currentUserEmail.toLowerCase();
 
   return (
     <div className="space-y-5">
@@ -732,26 +941,7 @@ function CampaignResultsBody({
           {Object.keys(strategy).length > 0 && <StrategyCard strategy={strategy} type={campaignType} />}
 
           {/* Approval */}
-          {!isDecided ? (
-            <div className="relative overflow-hidden rounded-xl bg-slate-950 border border-slate-800/60 p-5">
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_0%_100%,rgba(234,88,12,0.10)_0%,transparent_60%)]" />
-              <div className="relative z-10 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Star className="w-4 h-4 text-amber-400" />
-                  <span className="text-sm font-bold text-white">Review & Approve</span>
-                </div>
-                <p className="text-xs text-slate-400 leading-relaxed">Approve to finalize or reject to revise the campaign.</p>
-                <div className="flex gap-2">
-                  <Button onClick={() => onApprove("approved")} disabled={approving} className="flex-1 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold h-8">
-                    {approving ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsUp className="w-3 h-3" />} Approve All
-                  </Button>
-                  <Button onClick={() => onApprove("rejected")} disabled={approving} variant="outline" className="flex-1 gap-1.5 border-red-800 text-red-400 hover:bg-red-950/50 text-xs font-semibold h-8">
-                    <ThumbsDown className="w-3 h-3" /> Reject
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : (
+          {isDecided ? (
             <div className={`rounded-xl border px-5 py-4 flex items-center gap-3 ${showApproved ? "bg-emerald-950/40 border-emerald-800/60" : "bg-red-950/40 border-red-800/60"}`}>
               {showApproved ? <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" /> : <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />}
               <div>
@@ -760,6 +950,50 @@ function CampaignResultsBody({
                 </p>
                 <p className="text-xs text-slate-500">Decision recorded</p>
               </div>
+            </div>
+          ) : isApprovalOwner ? (
+            <div className="relative overflow-hidden rounded-xl bg-slate-950 border border-slate-800/60 p-5">
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_0%_100%,rgba(234,88,12,0.10)_0%,transparent_60%)]" />
+              <div className="relative z-10 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Star className="w-4 h-4 text-amber-400" />
+                  <span className="text-sm font-bold text-white">Finalize Campaign</span>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Approve all messages to finalize, or reject to send back for revision. You can also approve or reject individual messages above.
+                </p>
+                <div className="flex gap-2">
+                  <Button onClick={() => onApprove("approved")} disabled={approving} className="flex-1 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold h-8">
+                    {approving ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsUp className="w-3 h-3" />} Approve All
+                  </Button>
+                  <Button onClick={() => onApprove("rejected")} disabled={approving} variant="outline" className="flex-1 gap-1.5 border-red-800 text-red-400 hover:bg-red-950/50 text-xs font-semibold h-8">
+                    <ThumbsDown className="w-3 h-3" /> Reject All
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-slate-200 bg-white px-5 py-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-7 h-7 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center flex-shrink-0">
+                  <Star className="w-3.5 h-3.5 text-amber-500" />
+                </div>
+                <span className="text-sm font-semibold text-slate-700">Awaiting Approval</span>
+              </div>
+              <p className="text-xs text-slate-500 leading-relaxed mb-3">
+                Only the designated approval owner can approve or reject messages in this campaign.
+              </p>
+              {approvalOwner && (
+                <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-orange-400 to-violet-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                    {initials(approvalOwner.split("@")[0])}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-slate-700 capitalize truncate">{approvalOwner.split("@")[0].replace(/[._]/g, " ")}</p>
+                    <p className="text-xs text-slate-400 truncate">{approvalOwner}</p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -776,7 +1010,17 @@ function CampaignResultsBody({
             </div>
           ) : (
             Array.from(groupByRecipient(assets)).map(([email, group]) => (
-              <RecipientGroup key={email} email={email} assets={group} isEmail={campaignType === "email"} />
+              <RecipientGroup
+                key={email}
+                email={email}
+                assets={group}
+                isEmail={campaignType === "email"}
+                assetApprovals={assetApprovals}
+                isApprovalOwner={isApprovalOwner}
+                isBulkDecided={isDecided}
+                approvingAssetId={approvingAssetId}
+                onApproveAsset={onAssetApprove}
+              />
             ))
           )}
         </div>
@@ -804,6 +1048,18 @@ export default function CampaignPage() {
   const [aiSummary, setAiSummary] = useState<AISummary | null>(null);
   const [loadingAiSummary, setLoadingAiSummary] = useState(false);
   const [aiSummaryError, setAiSummaryError] = useState("");
+
+  // Current authenticated user
+  const [currentUserEmail, setCurrentUserEmail] = useState("");
+
+  // Per-asset approval overrides
+  const [assetApprovals, setAssetApprovals] = useState<Record<number, string>>({});
+  const [approvingAssetId, setApprovingAssetId] = useState<number | null>(null);
+
+  // Approval owner users
+  const [approvalUsers, setApprovalUsers] = useState<UserOption[]>([]);
+  const [loadingApprovalUsers, setLoadingApprovalUsers] = useState(false);
+  const [approvalUsersError, setApprovalUsersError] = useState("");
 
   // Wizard form state
   const [form, setForm] = useState({
@@ -841,7 +1097,21 @@ export default function CampaignPage() {
       .finally(() => setLoadingList(false));
   };
 
-  useEffect(() => { fetchCampaigns(); }, []);
+  useEffect(() => {
+    fetchCampaigns();
+    API.get("/auth/me").then((r) => setCurrentUserEmail(r.data?.email || "")).catch(() => {});
+  }, []);
+
+  // Fetch valid approval users when entering details step
+  useEffect(() => {
+    if (step !== "details" || approvalUsers.length > 0) return;
+    setLoadingApprovalUsers(true);
+    setApprovalUsersError("");
+    API.get("/auth/users")
+      .then((r) => setApprovalUsers(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setApprovalUsersError("Could not load users"))
+      .finally(() => setLoadingApprovalUsers(false));
+  }, [step]);
 
   // Fetch leads/contacts on targets step
   useEffect(() => {
@@ -906,6 +1176,7 @@ export default function CampaignPage() {
     setViewApproved(null);
     setAiSummary(null);
     setAiSummaryError("");
+    setAssetApprovals({});
     setLoadingView(true);
     setStep("view");
     API.get(`/campaigns/${id}/status`)
@@ -916,6 +1187,8 @@ export default function CampaignPage() {
 
   const handleGenerate = async () => {
     setGenError("");
+    setAiSummary(null);
+    setAiSummaryError("");
     setStep("generating");
     const defaultTone = campaignType === "email" ? "consultative" : "professional";
     const payload = campaignType === "email"
@@ -933,12 +1206,24 @@ export default function CampaignPage() {
     }
   };
 
+  const handleAssetApprove = async (campaignId: number, assetId: number, decision: "approved" | "rejected") => {
+    setApprovingAssetId(assetId);
+    try {
+      await API.post(`/campaigns/${campaignId}/assets/${assetId}/approve`, { decision });
+      setAssetApprovals((prev) => ({ ...prev, [assetId]: decision }));
+    } catch (err) { console.error(err); }
+    finally { setApprovingAssetId(null); }
+  };
+
   const handleApprove = async (decision: "approved" | "rejected") => {
     if (!result) return;
     setApproving(true);
     try {
       await API.post(`/campaigns/${result.campaign_id}/approve-drafts`, { decision });
       setApproved(decision === "approved");
+      const bulk: Record<number, string> = {};
+      result.status.assets.forEach((a) => { bulk[a.id] = decision; });
+      setAssetApprovals((prev) => ({ ...prev, ...bulk }));
       fetchCampaigns();
     } catch (err) { console.error(err); }
     finally { setApproving(false); }
@@ -950,6 +1235,9 @@ export default function CampaignPage() {
     try {
       await API.post(`/campaigns/${viewingStatus.campaign.id}/approve-drafts`, { decision });
       setViewApproved(decision === "approved");
+      const bulk: Record<number, string> = {};
+      viewingStatus.assets.forEach((a) => { bulk[a.id] = decision; });
+      setAssetApprovals((prev) => ({ ...prev, ...bulk }));
       fetchCampaigns();
     } catch (err) { console.error(err); }
     finally { setViewApproving(false); }
@@ -962,6 +1250,7 @@ export default function CampaignPage() {
     setSelectedLeads(new Set()); setSelectedContacts(new Set()); setSearch("");
     setResult(null); setGenError(""); setApproved(null);
     setViewingStatus(null); setAiSummary(null); setAiSummaryError("");
+    setAssetApprovals({}); setApprovingAssetId(null);
   };
 
   const isWizard = ["type", "details", "targets", "generating"].includes(step);
@@ -1115,13 +1404,31 @@ export default function CampaignPage() {
 
             return (
               <>
-                {/* AI Summary — always shown when viewing an existing campaign */}
-                <AISummaryPanel
-                  summary={aiSummary}
-                  loading={loadingAiSummary}
-                  error={aiSummaryError}
-                  onGenerate={() => fetchAiSummary(c.id)}
-                />
+                {/* AI Summary — only shown once the campaign has generated assets */}
+                {assets.length > 0 ? (
+                  <AISummaryPanel
+                    summary={aiSummary}
+                    loading={loadingAiSummary}
+                    error={aiSummaryError}
+                    onGenerate={() => fetchAiSummary(c.id)}
+                  />
+                ) : (
+                  <div className="relative overflow-hidden rounded-xl bg-slate-950 border border-slate-800/60 px-5 py-4">
+                    <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_0%_0%,rgba(234,88,12,0.12)_0%,transparent_60%)]" />
+                    <div className="relative z-10 flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-orange-500/15 border border-orange-500/20 flex items-center justify-center flex-shrink-0">
+                        <Sparkles className="w-4 h-4 text-orange-400" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-white uppercase tracking-wider">AI Summary</p>
+                        <p className="text-xs text-slate-500 mt-0.5">Available once campaign generation completes</p>
+                      </div>
+                      <span className={`ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${orchStateColor(c.orchestration_state)} bg-opacity-80`}>
+                        {ORCH_LABELS[c.orchestration_state || ""] || c.orchestration_state || "In Progress"}
+                      </span>
+                    </div>
+                  </div>
+                )}
                 <CampaignResultsBody
                   campaignId={c.id}
                   campaignName={c.name}
@@ -1132,7 +1439,12 @@ export default function CampaignPage() {
                   qaPassed={allQaPassed}
                   assets={assets}
                   existingApproval={existingApproval}
+                  approvalOwner={c.approval_owner}
+                  currentUserEmail={currentUserEmail}
+                  assetApprovals={assetApprovals}
+                  approvingAssetId={approvingAssetId}
                   onApprove={handleViewApprove}
+                  onAssetApprove={(assetId, decision) => handleAssetApprove(c.id, assetId, decision)}
                   approving={viewApproving}
                   approved={viewApproved}
                 />
@@ -1148,20 +1460,35 @@ export default function CampaignPage() {
 
       {/* ── RESULTS (newly generated) ──────────────────────────────────── */}
       {isResults && result && (
-        <CampaignResultsBody
-          campaignId={result.campaign_id}
-          campaignName={(result.status.campaign as Record<string, string>).name || form.campaign_name}
-          campaignType={campaignType}
-          resolveSummary={result.resolve_summary}
-          strategy={result.strategy}
-          generatedCount={result.generated_assets_count}
-          qaPassed={result.qa_summary.passed}
-          assets={result.status.assets}
-          existingApproval={null}
-          onApprove={handleApprove}
-          approving={approving}
-          approved={approved}
-        />
+        <>
+          {result.status.assets.length > 0 && (
+            <AISummaryPanel
+              summary={aiSummary}
+              loading={loadingAiSummary}
+              error={aiSummaryError}
+              onGenerate={() => fetchAiSummary(result.campaign_id)}
+            />
+          )}
+          <CampaignResultsBody
+            campaignId={result.campaign_id}
+            campaignName={result.status.campaign.name || form.campaign_name}
+            campaignType={campaignType}
+            resolveSummary={result.resolve_summary}
+            strategy={result.strategy}
+            generatedCount={result.generated_assets_count}
+            qaPassed={result.qa_summary.passed}
+            assets={result.status.assets}
+            existingApproval={null}
+            approvalOwner={result.status.campaign.approval_owner}
+            currentUserEmail={currentUserEmail}
+            assetApprovals={assetApprovals}
+            approvingAssetId={approvingAssetId}
+            onApprove={handleApprove}
+            onAssetApprove={(assetId, decision) => handleAssetApprove(result.campaign_id, assetId, decision)}
+            approving={approving}
+            approved={approved}
+          />
+        </>
       )}
 
       {/* ── WIZARD: two-col layout ─────────────────────────────────────── */}
@@ -1249,8 +1576,21 @@ export default function CampaignPage() {
                     <Input placeholder="e.g. Schedule a 15-min call" value={form.cta_preference} onChange={(e) => setField("cta_preference", e.target.value)} className="border-slate-200 focus:ring-orange-500/30 focus:border-orange-400" />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Approval Owner <span className="text-red-400">*</span></label>
-                    <Input placeholder="e.g. john.doe@company.com" value={form.approval_owner} onChange={(e) => setField("approval_owner", e.target.value)} className="border-slate-200 focus:ring-orange-500/30 focus:border-orange-400" />
+                    <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">
+                      Approval Owner <span className="text-red-400">*</span>
+                    </label>
+                    <ApprovalOwnerCombobox
+                      value={form.approval_owner}
+                      onChange={(email) => setField("approval_owner", email)}
+                      users={approvalUsers}
+                      loading={loadingApprovalUsers}
+                      error={approvalUsersError}
+                    />
+                    {form.approval_owner && (
+                      <p className="mt-1.5 text-xs text-emerald-600 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> {form.approval_owner} selected
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center justify-between">

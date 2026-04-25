@@ -1192,7 +1192,7 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
           <StrategyBriefCard brief={brief} scoringStatus={effectiveStatus} />
 
           {/* AI Snapshot */}
-          <AISummaryCard leadId={lead.id} />
+          <AISummaryCard leadId={lead.id} scoringStatus={effectiveStatus} />
 
           {/* Scoring state sidebar panel */}
           {(effectiveStatus === "pending" || effectiveStatus === "scoring" || effectiveStatus === "failed") && (
