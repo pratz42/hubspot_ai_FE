@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactElement } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -27,9 +27,23 @@ import {
   Calendar,
   Eye,
   RefreshCw,
+  Pause,
+  Send,
+  Pencil,
+  Save,
+  RotateCcw,
+  X,
+  Lock,
 } from "lucide-react";
 import API from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
+import { CampaignSendPanel, CONTENT_LOCKED_STATUSES } from "@/components/campaigns/CampaignSendPanel";
+import { CampaignActivityFeed } from "@/components/campaigns/CampaignActivityFeed";
+import type { CampaignSendStatus } from "@/hooks/useCampaignSendStream";
+
+const DRAFT_EXISTS_STATES = new Set([
+  "emails_generated", "qa_passed", "drafts_approved", "drafts_rejected",
+]);
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -77,6 +91,15 @@ interface CampaignListItem {
   approval_owner?: string;
   plan_data?: Record<string, unknown>;
   created_at: string;
+  // Send pipeline fields
+  channel?: string;
+  send_status?: string;
+  sent_count?: number;
+  failed_count?: number;
+  draft_count?: number;
+  skipped_count?: number;
+  eligible_count?: number;
+  excluded_count?: number;
 }
 
 interface CampaignStatusDetail {
@@ -227,6 +250,71 @@ function orchStateColor(state?: string) {
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+type SendStatusConfig = {
+  label: string;
+  cls: string;
+  icon: ReactElement;
+};
+
+const SEND_STATUS_CONFIG: Record<string, SendStatusConfig> = {
+  queued: {
+    label: "Queued",
+    cls: "bg-blue-100 text-blue-700 border-blue-300",
+    icon: <Loader2 className="w-3 h-3 animate-spin" />,
+  },
+  sending: {
+    label: "Sending",
+    cls: "bg-blue-100 text-blue-700 border-blue-300",
+    icon: <Send className="w-3 h-3" />,
+  },
+  paused: {
+    label: "Paused",
+    cls: "bg-amber-100 text-amber-700 border-amber-300",
+    icon: <Pause className="w-3 h-3" />,
+  },
+  sent: {
+    label: "Sent",
+    cls: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    icon: <CheckCircle2 className="w-3 h-3" />,
+  },
+  partial_failed: {
+    label: "Partial",
+    cls: "bg-amber-100 text-amber-700 border-amber-300",
+    icon: <AlertTriangle className="w-3 h-3" />,
+  },
+  cancelled: {
+    label: "Cancelled",
+    cls: "bg-slate-100 text-slate-500 border-slate-300",
+    icon: <XCircle className="w-3 h-3" />,
+  },
+  failed: {
+    label: "Failed",
+    cls: "bg-red-100 text-red-700 border-red-300",
+    icon: <XCircle className="w-3 h-3" />,
+  },
+};
+
+function sendStatusBadge(sendStatus?: string) {
+  if (!sendStatus || sendStatus === "not_started") return null;
+  const cfg = SEND_STATUS_CONFIG[sendStatus];
+  const cls = cfg?.cls ?? "bg-slate-100 text-slate-500 border-slate-300";
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border flex-shrink-0 ${cls}`}>
+      {cfg?.icon}
+      {cfg?.label ?? sendStatus}
+    </span>
+  );
+}
+
+function listRowBackground(sendStatus?: string): string {
+  if (!sendStatus || sendStatus === "not_started" || sendStatus === "cancelled") return "";
+  if (sendStatus === "partial_failed" || sendStatus === "paused") return "bg-amber-50/60";
+  if (sendStatus === "sending" || sendStatus === "queued") return "bg-blue-50/40";
+  if (sendStatus === "failed") return "bg-red-50/40";
+  if (sendStatus === "sent") return "bg-emerald-50/30";
+  return "";
 }
 
 // ─── AI Side Panel ───────────────────────────────────────────────────────────
@@ -420,93 +508,251 @@ function assetStatusBadge(status: string) {
 
 function MessageCard({
   asset,
+  campaignId,
   isEmail,
   effectiveStatus,
   isApprovalOwner,
   isBulkDecided,
+  isContentLocked,
   approvingAssetId,
   onApproveAsset,
+  onDraftEdited,
 }: {
   asset: GeneratedAsset;
+  campaignId: number;
   isEmail: boolean;
   effectiveStatus: string;
   isApprovalOwner: boolean;
   isBulkDecided: boolean;
+  isContentLocked: boolean;
   approvingAssetId: number | null;
   onApproveAsset: (assetId: number, decision: "approved" | "rejected") => void;
+  onDraftEdited: (assetId: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editSubject, setEditSubject] = useState(asset.subject);
+  const [editBody, setEditBody] = useState(asset.body);
+  const [editCta, setEditCta] = useState(asset.cta ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+
   const score = asset.qa_score ?? 100;
   const isApproving = approvingAssetId === asset.id;
   const canAct = isApprovalOwner && !isBulkDecided;
+  const isDirty = editSubject !== asset.subject || editBody !== asset.body || editCta !== (asset.cta ?? "");
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [editBody, editing]);
+
+  function startEditing() {
+    setEditSubject(asset.subject);
+    setEditBody(asset.body);
+    setEditCta(asset.cta ?? "");
+    setSaveError(null);
+    setEditing(true);
+    setOpen(true);
+  }
+
+  async function handleSave() {
+    const trimSubject = editSubject.trim();
+    const trimBody = editBody.trim();
+    if (!trimSubject) { setSaveError("Subject cannot be empty."); return; }
+    if (!trimBody) { setSaveError("Body cannot be empty."); return; }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const patch: Record<string, string> = { subject: trimSubject, body: trimBody };
+      if (editCta.trim()) patch.cta = editCta.trim();
+      await API.patch(`/campaigns/${campaignId}/assets/${asset.id}`, patch);
+      setEditing(false);
+      onDraftEdited(asset.id);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className={`rounded-lg border bg-white overflow-hidden transition-colors ${effectiveStatus === "approved" ? "border-emerald-200" : effectiveStatus === "rejected" ? "border-red-200" : "border-slate-200"}`}>
-      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors text-left">
-        <div className="flex-shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-orange-400 to-violet-500 flex items-center justify-center text-xs font-bold text-white">
-          {asset.sequence_step}
+      {/* Header row */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <button onClick={() => setOpen((v) => !v)} className="flex items-center gap-3 flex-1 min-w-0 text-left hover:opacity-80 transition-opacity">
+          <div className="flex-shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-orange-400 to-violet-500 flex items-center justify-center text-xs font-bold text-white">
+            {asset.sequence_step}
+          </div>
+          <div className="flex-1 min-w-0">
+            {isEmail
+              ? <p className="text-sm font-medium text-slate-800 truncate">{asset.subject || "Email message"}</p>
+              : <p className="text-sm font-medium text-slate-800 truncate">{asset.body.slice(0, 65)}…</p>}
+          </div>
+        </button>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <div className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${qaColor(score)}`}>{score}</div>
+          {assetStatusBadge(effectiveStatus)}
+          {!isContentLocked && (
+            editing ? (
+              <button
+                onClick={() => { setEditing(false); setSaveError(null); }}
+                className="flex items-center gap-1 text-xs font-medium text-slate-500 bg-white border border-slate-200 hover:bg-slate-50 rounded-md px-2 py-1 transition-colors"
+              >
+                <X className="w-3 h-3" /> Cancel
+              </button>
+            ) : (
+              <button
+                onClick={startEditing}
+                className="flex items-center gap-1 text-xs font-medium text-orange-600 bg-orange-50 border border-orange-200 hover:bg-orange-100 rounded-md px-2 py-1 transition-colors"
+              >
+                <Pencil className="w-3 h-3" /> Edit
+              </button>
+            )
+          )}
+          <button onClick={() => setOpen((v) => !v)} className="text-slate-400 hover:text-slate-600 transition-colors">
+            {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
         </div>
-        <div className="flex-1 min-w-0">
-          {isEmail
-            ? <p className="text-sm font-medium text-slate-800 truncate">{asset.subject || "Email message"}</p>
-            : <p className="text-sm font-medium text-slate-800 truncate">{asset.body.slice(0, 65)}…</p>}
-        </div>
-        <div className={`text-xs font-semibold px-2 py-0.5 rounded-full border flex-shrink-0 ${qaColor(score)}`}>{score}</div>
-        {assetStatusBadge(effectiveStatus)}
-        {open ? <ChevronUp className="w-4 h-4 text-slate-400 flex-shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />}
-      </button>
+      </div>
+
       {open && (
         <div className="px-4 pb-4 space-y-3 border-t border-slate-100">
-          {isEmail && (
-            <div className="pt-3">
-              <div className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-1">Subject</div>
-              <p className="text-sm font-semibold text-slate-900">{asset.subject}</p>
-            </div>
-          )}
-          <div className={isEmail ? "" : "pt-3"}>
-            <div className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-2">Body</div>
-            <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap bg-slate-50 rounded-lg p-3 border border-slate-100">
-              {asset.body}
-            </div>
-          </div>
-          {asset.cta && (
-            <div>
-              <div className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-1">CTA</div>
-              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-orange-50 text-orange-700 border border-orange-100">{asset.cta}</span>
-            </div>
-          )}
-          {asset.qa_notes && asset.qa_notes !== "passed" && (
-            <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mt-0.5 flex-shrink-0" />
-              <p className="text-xs text-amber-700">{asset.qa_notes}</p>
-            </div>
-          )}
-
-          {/* Per-message approval actions */}
-          {canAct && (
-            <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-              <button
-                onClick={() => onApproveAsset(asset.id, "approved")}
-                disabled={isApproving}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-60 ${effectiveStatus === "approved" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-white text-slate-600 border-slate-200 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200"}`}
-              >
-                {isApproving ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsUp className="w-3 h-3" />}
-                Approve
-              </button>
-              <button
-                onClick={() => onApproveAsset(asset.id, "rejected")}
-                disabled={isApproving}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-60 ${effectiveStatus === "rejected" ? "bg-red-100 text-red-700 border-red-200" : "bg-white text-slate-600 border-slate-200 hover:bg-red-50 hover:text-red-700 hover:border-red-200"}`}
-              >
-                <ThumbsDown className="w-3 h-3" />
-                Reject
-              </button>
-              {effectiveStatus !== "pending" && (
-                <span className={`ml-auto text-xs font-medium ${effectiveStatus === "approved" ? "text-emerald-600" : "text-red-600"}`}>
-                  {effectiveStatus === "approved" ? "Approved" : "Rejected"}
-                </span>
+          {editing ? (
+            /* ── Inline edit form ── */
+            <div className="pt-3 space-y-3">
+              {effectiveStatus === "approved" && (
+                <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-700">This draft was approved. Saving will reset approval back to <strong>pending</strong>.</p>
+                </div>
               )}
+              {isEmail && (
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Subject</label>
+                  <input
+                    type="text"
+                    value={editSubject}
+                    onChange={(e) => setEditSubject(e.target.value)}
+                    maxLength={500}
+                    className="w-full text-sm text-slate-800 bg-white border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all"
+                  />
+                </div>
+              )}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Body</label>
+                <textarea
+                  ref={bodyRef}
+                  value={editBody}
+                  onChange={(e) => setEditBody(e.target.value)}
+                  rows={6}
+                  className="w-full text-sm text-slate-800 bg-white border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all resize-none leading-relaxed"
+                  style={{ minHeight: "140px" }}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  CTA <span className="text-slate-300 font-normal normal-case">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={editCta}
+                  onChange={(e) => setEditCta(e.target.value)}
+                  maxLength={300}
+                  className="w-full text-sm text-slate-800 bg-white border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all"
+                  placeholder="Call-to-action text (optional)…"
+                />
+              </div>
+              {saveError && (
+                <p className="text-xs text-red-600 flex items-center gap-1.5"><X className="w-3.5 h-3.5" />{saveError}</p>
+              )}
+              <div className="flex items-center gap-2 pt-1">
+                {isDirty && (
+                  <button
+                    onClick={() => { setEditSubject(asset.subject); setEditBody(asset.body); setEditCta(asset.cta ?? ""); setSaveError(null); }}
+                    disabled={saving}
+                    className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1 transition-colors"
+                  >
+                    <RotateCcw className="w-3 h-3" /> Reset
+                  </button>
+                )}
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    onClick={() => { setEditing(false); setSaveError(null); }}
+                    disabled={saving}
+                    className="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-md border border-slate-200 bg-white transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    disabled={saving || !isDirty}
+                    className="text-xs font-semibold text-white bg-orange-600 hover:bg-orange-700 px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors disabled:opacity-40"
+                  >
+                    {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                    Save
+                  </button>
+                </div>
+              </div>
             </div>
+          ) : (
+            /* ── Read-only view ── */
+            <>
+              {isEmail && (
+                <div className="pt-3">
+                  <div className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-1">Subject</div>
+                  <p className="text-sm font-semibold text-slate-900">{asset.subject}</p>
+                </div>
+              )}
+              <div className={isEmail ? "" : "pt-3"}>
+                <div className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-2">Body</div>
+                <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap bg-slate-50 rounded-lg p-3 border border-slate-100">
+                  {asset.body}
+                </div>
+              </div>
+              {asset.cta && (
+                <div>
+                  <div className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-1">CTA</div>
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-orange-50 text-orange-700 border border-orange-100">{asset.cta}</span>
+                </div>
+              )}
+              {asset.qa_notes && asset.qa_notes !== "passed" && (
+                <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-amber-700">{asset.qa_notes}</p>
+                </div>
+              )}
+
+              {/* Per-message approval actions */}
+              {canAct && (
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    onClick={() => onApproveAsset(asset.id, "approved")}
+                    disabled={isApproving}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-60 ${effectiveStatus === "approved" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-white text-slate-600 border-slate-200 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200"}`}
+                  >
+                    {isApproving ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsUp className="w-3 h-3" />}
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => onApproveAsset(asset.id, "rejected")}
+                    disabled={isApproving}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-60 ${effectiveStatus === "rejected" ? "bg-red-100 text-red-700 border-red-200" : "bg-white text-slate-600 border-slate-200 hover:bg-red-50 hover:text-red-700 hover:border-red-200"}`}
+                  >
+                    <ThumbsDown className="w-3 h-3" />
+                    Reject
+                  </button>
+                  {effectiveStatus !== "pending" && (
+                    <span className={`ml-auto text-xs font-medium ${effectiveStatus === "approved" ? "text-emerald-600" : "text-red-600"}`}>
+                      {effectiveStatus === "approved" ? "Approved" : "Rejected"}
+                    </span>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -517,16 +763,19 @@ function MessageCard({
 // ─── Recipient Group ─────────────────────────────────────────────────────────
 
 function RecipientGroup({
-  email, assets, isEmail, assetApprovals, isApprovalOwner, isBulkDecided, approvingAssetId, onApproveAsset,
+  email, assets, campaignId, isEmail, assetApprovals, isApprovalOwner, isBulkDecided, isContentLocked, approvingAssetId, onApproveAsset, onDraftEdited,
 }: {
   email: string;
   assets: GeneratedAsset[];
+  campaignId: number;
   isEmail: boolean;
   assetApprovals: Record<number, string>;
   isApprovalOwner: boolean;
   isBulkDecided: boolean;
+  isContentLocked: boolean;
   approvingAssetId: number | null;
   onApproveAsset: (assetId: number, decision: "approved" | "rejected") => void;
+  onDraftEdited: (assetId: number) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const name = assets[0]?.recipient_name || email.split("@")[0];
@@ -559,12 +808,15 @@ function RecipientGroup({
             <MessageCard
               key={a.id}
               asset={a}
+              campaignId={campaignId}
               isEmail={isEmail}
               effectiveStatus={assetApprovals[a.id] ?? a.approval_status}
               isApprovalOwner={isApprovalOwner}
               isBulkDecided={isBulkDecided}
+              isContentLocked={isContentLocked}
               approvingAssetId={approvingAssetId}
               onApproveAsset={onApproveAsset}
+              onDraftEdited={onDraftEdited}
             />
           ))}
         </div>
@@ -862,8 +1114,10 @@ function CampaignResultsBody({
   currentUserEmail,
   assetApprovals,
   approvingAssetId,
+  isContentLocked = false,
   onApprove,
   onAssetApprove,
+  onDraftEdited,
   approving,
   approved,
 }: {
@@ -880,8 +1134,10 @@ function CampaignResultsBody({
   currentUserEmail?: string;
   assetApprovals: Record<number, string>;
   approvingAssetId: number | null;
+  isContentLocked?: boolean;
   onApprove: (decision: "approved" | "rejected") => void;
   onAssetApprove: (assetId: number, decision: "approved" | "rejected") => void;
+  onDraftEdited: (assetId: number) => void;
   approving: boolean;
   approved: boolean | null;
 }) {
@@ -1014,12 +1270,15 @@ function CampaignResultsBody({
                 key={email}
                 email={email}
                 assets={group}
+                campaignId={campaignId}
                 isEmail={campaignType === "email"}
                 assetApprovals={assetApprovals}
                 isApprovalOwner={isApprovalOwner}
                 isBulkDecided={isDecided}
+                isContentLocked={isContentLocked}
                 approvingAssetId={approvingAssetId}
                 onApproveAsset={onAssetApprove}
+                onDraftEdited={onDraftEdited}
               />
             ))
           )}
@@ -1045,6 +1304,8 @@ export default function CampaignPage() {
   const [loadingView, setLoadingView] = useState(false);
   const [viewApproved, setViewApproved] = useState<boolean | null>(null);
   const [viewApproving, setViewApproving] = useState(false);
+  // Real-time content-lock state fed back from CampaignSendPanel (SSE-derived)
+  const [sendContentLocked, setSendContentLocked] = useState(false);
   const [aiSummary, setAiSummary] = useState<AISummary | null>(null);
   const [loadingAiSummary, setLoadingAiSummary] = useState(false);
   const [aiSummaryError, setAiSummaryError] = useState("");
@@ -1064,8 +1325,8 @@ export default function CampaignPage() {
   // Wizard form state
   const [form, setForm] = useState({
     campaign_name: "", objective: "", approval_owner: "", tone: "",
-    sequence_count: 3, send_gap_days: 3, cta_preference: "",
-    send_start_date: "", send_end_date: "", industry_focus: "",
+    sequence_count: 3, cta_preference: "",
+    industry_focus: "",
   });
   const [leads, setLeads] = useState<Lead[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -1174,6 +1435,7 @@ export default function CampaignPage() {
   const handleViewCampaign = (id: number, type?: string) => {
     setCampaignType((type as CampaignType) || "email");
     setViewApproved(null);
+    setSendContentLocked(false);
     setAiSummary(null);
     setAiSummaryError("");
     setAssetApprovals({});
@@ -1192,7 +1454,7 @@ export default function CampaignPage() {
     setStep("generating");
     const defaultTone = campaignType === "email" ? "consultative" : "professional";
     const payload = campaignType === "email"
-      ? { campaign_name: form.campaign_name, objective: form.objective, approval_owner: form.approval_owner, tone: form.tone || defaultTone, sequence_count: form.sequence_count, send_gap_days: form.send_gap_days, cta_preference: form.cta_preference || undefined, send_start_date: form.send_start_date || undefined, send_end_date: form.send_end_date || undefined, lead_ids: Array.from(selectedLeads), contact_ids: Array.from(selectedContacts) }
+      ? { campaign_name: form.campaign_name, objective: form.objective, approval_owner: form.approval_owner, tone: form.tone || defaultTone, sequence_count: form.sequence_count, cta_preference: form.cta_preference || undefined, lead_ids: Array.from(selectedLeads), contact_ids: Array.from(selectedContacts) }
       : { campaign_name: form.campaign_name, objective: form.objective, approval_owner: form.approval_owner, tone: form.tone || defaultTone, sequence_count: form.sequence_count, cta_preference: form.cta_preference || undefined, industry_focus: form.industry_focus || undefined, lead_ids: Array.from(selectedLeads), contact_ids: Array.from(selectedContacts) };
     try {
       const endpoint = campaignType === "email" ? "/campaigns/email/create-and-generate" : "/campaigns/linkedin/create-and-generate";
@@ -1209,8 +1471,23 @@ export default function CampaignPage() {
   const handleAssetApprove = async (campaignId: number, assetId: number, decision: "approved" | "rejected") => {
     setApprovingAssetId(assetId);
     try {
-      await API.post(`/campaigns/${campaignId}/assets/${assetId}/approve`, { decision });
-      setAssetApprovals((prev) => ({ ...prev, [assetId]: decision }));
+      const { data } = await API.post(`/campaigns/${campaignId}/assets/${assetId}/approve`, { decision });
+      const updatedStatus: CampaignStatusDetail = data.status;
+      const bulk: Record<number, string> = {};
+      updatedStatus.assets.forEach((a) => { bulk[a.id] = a.approval_status ?? decision; });
+      setAssetApprovals((prev) => ({ ...prev, ...bulk }));
+      const campStatus = updatedStatus.campaign.approval_status;
+      if (campStatus === "approved" || campStatus === "rejected") {
+        setViewApproved(campStatus === "approved");
+        setApproved(campStatus === "approved");
+      }
+      setViewingStatus((prev) => (prev && prev.campaign.id === campaignId ? updatedStatus : prev));
+      setResult((prev) =>
+        prev && prev.campaign_id === campaignId ? { ...prev, status: updatedStatus } : prev
+      );
+      setCampaigns((prev) =>
+        prev.map((c) => c.id === campaignId ? { ...c, ...updatedStatus.campaign } : c)
+      );
     } catch (err) { console.error(err); }
     finally { setApprovingAssetId(null); }
   };
@@ -1219,11 +1496,16 @@ export default function CampaignPage() {
     if (!result) return;
     setApproving(true);
     try {
-      await API.post(`/campaigns/${result.campaign_id}/approve-drafts`, { decision });
-      setApproved(decision === "approved");
+      const { data } = await API.post(`/campaigns/${result.campaign_id}/approve-drafts`, { decision });
+      const updatedStatus: CampaignStatusDetail = data.status;
+      setApproved(updatedStatus.campaign.approval_status === "approved");
       const bulk: Record<number, string> = {};
-      result.status.assets.forEach((a) => { bulk[a.id] = decision; });
+      updatedStatus.assets.forEach((a) => { bulk[a.id] = a.approval_status ?? decision; });
       setAssetApprovals((prev) => ({ ...prev, ...bulk }));
+      setResult((prev) => prev ? { ...prev, status: updatedStatus } : prev);
+      setCampaigns((prev) =>
+        prev.map((c) => c.id === result.campaign_id ? { ...c, ...updatedStatus.campaign } : c)
+      );
       fetchCampaigns();
     } catch (err) { console.error(err); }
     finally { setApproving(false); }
@@ -1233,20 +1515,49 @@ export default function CampaignPage() {
     if (!viewingStatus) return;
     setViewApproving(true);
     try {
-      await API.post(`/campaigns/${viewingStatus.campaign.id}/approve-drafts`, { decision });
-      setViewApproved(decision === "approved");
+      const { data } = await API.post(`/campaigns/${viewingStatus.campaign.id}/approve-drafts`, { decision });
+      const updatedStatus: CampaignStatusDetail = data.status;
+      setViewApproved(updatedStatus.campaign.approval_status === "approved");
       const bulk: Record<number, string> = {};
-      viewingStatus.assets.forEach((a) => { bulk[a.id] = decision; });
+      updatedStatus.assets.forEach((a) => { bulk[a.id] = a.approval_status ?? decision; });
       setAssetApprovals((prev) => ({ ...prev, ...bulk }));
+      setViewingStatus(updatedStatus);
+      setCampaigns((prev) =>
+        prev.map((c) => c.id === viewingStatus.campaign.id ? { ...c, ...updatedStatus.campaign } : c)
+      );
       fetchCampaigns();
     } catch (err) { console.error(err); }
     finally { setViewApproving(false); }
   };
 
+  const handleDraftEdited = async (assetId: number) => {
+    const editedCampaignId = viewingStatus?.campaign.id ?? result?.campaign_id ?? null;
+    if (editedCampaignId == null) return;
+
+    try {
+      const { data: updatedStatus }: { data: CampaignStatusDetail } =
+        await API.get(`/campaigns/${editedCampaignId}/status`);
+
+      const bulk: Record<number, string> = {};
+      updatedStatus.assets.forEach((a) => { bulk[a.id] = a.approval_status ?? "pending"; });
+      setAssetApprovals((prev) => ({ ...prev, ...bulk }));
+
+      setViewApproved(updatedStatus.campaign.approval_status === "approved" ? true : null);
+      setApproved(updatedStatus.campaign.approval_status === "approved" ? true : null);
+
+      setViewingStatus((prev) => (prev ? updatedStatus : prev));
+      setResult((prev) => prev ? { ...prev, status: updatedStatus } : prev);
+      setCampaigns((prev) =>
+        prev.map((c) => c.id === editedCampaignId ? { ...c, ...updatedStatus.campaign } : c)
+      );
+      fetchCampaigns();
+    } catch (err) { console.error(err); }
+  };
+
   const handleReset = () => {
     setStep("list");
     setCampaignType("email");
-    setForm({ campaign_name: "", objective: "", approval_owner: "", tone: "", sequence_count: 3, send_gap_days: 3, cta_preference: "", send_start_date: "", send_end_date: "", industry_focus: "" });
+    setForm({ campaign_name: "", objective: "", approval_owner: "", tone: "", sequence_count: 3, cta_preference: "", industry_focus: "" });
     setSelectedLeads(new Set()); setSelectedContacts(new Set()); setSearch("");
     setResult(null); setGenError(""); setApproved(null);
     setViewingStatus(null); setAiSummary(null); setAiSummaryError("");
@@ -1334,7 +1645,7 @@ export default function CampaignPage() {
                   const isEmail = c.type !== "linkedin";
                   const orchLabel = ORCH_LABELS[c.orchestration_state || ""] || c.orchestration_state || "Draft";
                   return (
-                    <div key={c.id} className="flex items-center gap-4 px-5 py-4 hover:bg-slate-50 transition-colors group">
+                    <div key={c.id} className={`flex items-center gap-4 px-5 py-4 hover:bg-slate-50 transition-colors group ${listRowBackground(c.send_status)}`}>
                       {/* Type icon */}
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${isEmail ? "bg-orange-100" : "bg-blue-100"}`}>
                         {isEmail
@@ -1342,15 +1653,30 @@ export default function CampaignPage() {
                           : <Link2 className="w-4 h-4 text-blue-600" />}
                       </div>
 
-                      {/* Name + goal */}
+                      {/* Name + goal + send counts */}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-slate-900 truncate">{c.name}</p>
-                        {c.goal && (
-                          <p className="text-xs text-slate-400 truncate mt-0.5">{c.goal}</p>
-                        )}
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          {c.goal && <p className="text-xs text-slate-400 truncate max-w-[200px]">{c.goal}</p>}
+                          {(c.sent_count != null && c.sent_count > 0) && (
+                            <span className="text-xs text-emerald-600 font-semibold">{c.sent_count} sent</span>
+                          )}
+                          {(c.failed_count != null && c.failed_count > 0) && (
+                            <span className="text-xs text-red-500 font-semibold">{c.failed_count} failed</span>
+                          )}
+                          {(c.skipped_count != null && c.skipped_count > 0) && (
+                            <span className="text-xs text-slate-400 font-medium">{c.skipped_count} skipped</span>
+                          )}
+                          {(c.excluded_count != null && c.excluded_count > 0) && (
+                            <span className="text-xs text-slate-400 font-medium">{c.excluded_count} excluded</span>
+                          )}
+                        </div>
                       </div>
 
-                      {/* State badge */}
+                      {/* Send status badge (if send has been started) */}
+                      {sendStatusBadge(c.send_status)}
+
+                      {/* Orchestration state badge */}
                       <span className={`text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0 ${orchStateColor(c.orchestration_state)}`}>
                         {orchLabel}
                       </span>
@@ -1402,6 +1728,7 @@ export default function CampaignPage() {
             const existingApproval = c.approval_status && c.approval_status !== "pending" ? c.approval_status : null;
             const viewType: CampaignType = c.type === "linkedin" ? "linkedin" : "email";
 
+            const isContentLocked = sendContentLocked || CONTENT_LOCKED_STATUSES.has((c.send_status ?? "not_started") as CampaignSendStatus);
             return (
               <>
                 {/* AI Summary — only shown once the campaign has generated assets */}
@@ -1429,6 +1756,7 @@ export default function CampaignPage() {
                     </div>
                   </div>
                 )}
+
                 <CampaignResultsBody
                   campaignId={c.id}
                   campaignName={c.name}
@@ -1438,15 +1766,36 @@ export default function CampaignPage() {
                   generatedCount={assets.length}
                   qaPassed={allQaPassed}
                   assets={assets}
-                  existingApproval={existingApproval}
+                  existingApproval={isContentLocked ? c.approval_status ?? null : existingApproval}
                   approvalOwner={c.approval_owner}
                   currentUserEmail={currentUserEmail}
                   assetApprovals={assetApprovals}
-                  approvingAssetId={approvingAssetId}
-                  onApprove={handleViewApprove}
-                  onAssetApprove={(assetId, decision) => handleAssetApprove(c.id, assetId, decision)}
-                  approving={viewApproving}
+                  approvingAssetId={isContentLocked ? null : approvingAssetId}
+                  isContentLocked={isContentLocked}
+                  onApprove={isContentLocked ? () => {} : handleViewApprove}
+                  onAssetApprove={isContentLocked ? () => {} : (assetId, decision) => handleAssetApprove(c.id, assetId, decision)}
+                  onDraftEdited={handleDraftEdited}
+                  approving={isContentLocked ? false : viewApproving}
                   approved={viewApproved}
+                />
+
+                {/* Campaign Send Panel — visible once drafts exist; locks send when not yet approved */}
+                {(DRAFT_EXISTS_STATES.has(c.orchestration_state ?? "") || isContentLocked) && (
+                  <CampaignSendPanel
+                    campaignId={c.id}
+                    campaignType={viewType}
+                    approvalStatus={c.approval_status}
+                    currentUserEmail={currentUserEmail}
+                    approvalOwner={c.approval_owner}
+                    onSendStarted={fetchCampaigns}
+                    onContentLockedChange={setSendContentLocked}
+                  />
+                )}
+
+                {/* Activity Feed */}
+                <CampaignActivityFeed
+                  campaignId={c.id}
+                  sendStatus={c.send_status as CampaignSendStatus | undefined}
                 />
               </>
             );
@@ -1485,9 +1834,23 @@ export default function CampaignPage() {
             approvingAssetId={approvingAssetId}
             onApprove={handleApprove}
             onAssetApprove={(assetId, decision) => handleAssetApprove(result.campaign_id, assetId, decision)}
+            onDraftEdited={handleDraftEdited}
             approving={approving}
             approved={approved}
           />
+          {/* Send panel — visible once drafts exist; locks send when not yet approved */}
+          {DRAFT_EXISTS_STATES.has(result.status.campaign.orchestration_state ?? "") && (
+            <CampaignSendPanel
+              campaignId={result.campaign_id}
+              campaignType={campaignType}
+              approvalStatus={result.status.campaign.approval_status}
+              currentUserEmail={currentUserEmail}
+              approvalOwner={result.status.campaign.approval_owner as string | undefined}
+              onSendStarted={fetchCampaigns}
+              onContentLockedChange={setSendContentLocked}
+            />
+          )}
+          <CampaignActivityFeed campaignId={result.campaign_id} />
         </>
       )}
 
@@ -1553,18 +1916,6 @@ export default function CampaignPage() {
                       <input type="number" min={1} max={campaignType === "email" ? 6 : 10} value={form.sequence_count} onChange={(e) => setField("sequence_count", parseInt(e.target.value, 10) || 1)} className="w-full rounded-md border border-slate-200 px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400" />
                     </div>
                   </div>
-                  {campaignType === "email" && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Gap Between Emails (days)</label>
-                        <input type="number" min={1} max={30} value={form.send_gap_days} onChange={(e) => setField("send_gap_days", parseInt(e.target.value, 10) || 1)} className="w-full rounded-md border border-slate-200 px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Send Start Date</label>
-                        <input type="date" value={form.send_start_date} onChange={(e) => setField("send_start_date", e.target.value)} className="w-full rounded-md border border-slate-200 px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400" />
-                      </div>
-                    </div>
-                  )}
                   {campaignType === "linkedin" && (
                     <div>
                       <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Industry Focus</label>
