@@ -16,6 +16,7 @@ import {
   Contact,
   Sparkles,
   Briefcase,
+  TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import API from "@/lib/api";
@@ -23,12 +24,13 @@ import { useSidebar } from "./sidebar-context";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: Home },
-  { name: "Contacts", href: "/contacts", icon: Contact },
+  { name: "Contacts",  href: "/contacts",  icon: Contact },
   { name: "Companies", href: "/companies", icon: Building2 },
-  { name: "Leads", href: "/leads", icon: Users },
-  { name: "Deals", href: "/deals", icon: Briefcase },
-  { name: "Campaigns", href: "/campaign", icon: Target },
-  { name: "Admin", href: "/admin", icon: Settings, adminOnly: true },
+  { name: "Leads",     href: "/leads",     icon: Users },
+  { name: "Deals",     href: "/deals",     icon: Briefcase },
+  { name: "Campaigns", href: "/campaign",  icon: Target },
+  { name: "Reports",   href: "/reports",   icon: TrendingUp },
+  { name: "Admin",     href: "/admin",     icon: Settings, adminOnly: true },
 ];
 
 export function Sidebar() {
