@@ -15,6 +15,7 @@ import {
   Flame, Thermometer, Activity, AlertTriangle, BookOpen,
 } from "lucide-react";
 import API, { extractArray } from "@/lib/api";
+import { API_BASE_URL } from "@/lib/config";
 import { getErrorMessage } from "@/lib/errors";
 import { getPipelineStage, PIPELINE_STAGE_ORDER } from "@/lib/pipeline";
 import { Pagination } from "@/components/pagination";
@@ -643,7 +644,7 @@ export default function LeadsPage() {
     if (searchTerm) exportParams.search = searchTerm;
     const params = new URLSearchParams(exportParams);
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    const url = `http://localhost:8000/leads/export-csv?${params.toString()}`;
+    const url = `${API_BASE_URL}/leads/export-csv?${params.toString()}`;
     const a = document.createElement("a");
     a.href = url;
     if (token) {

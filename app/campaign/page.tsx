@@ -149,11 +149,7 @@ interface CampaignResult {
     passed: boolean;
     report: Array<{ asset_id: number; sequence_step: number; qa_score: number; qa_notes: string }>;
   };
-  status: {
-    campaign: { name?: string; approval_owner?: string; [key: string]: unknown };
-    targets: Array<{ recipient_status: string; resolved_email?: string }>;
-    assets: GeneratedAsset[];
-  };
+  status: CampaignStatusDetail;
 }
 
 type Step = "list" | "type" | "details" | "targets" | "generating" | "results" | "view";

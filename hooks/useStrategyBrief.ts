@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { API_BASE_URL } from "@/lib/config";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = API_BASE_URL;
 
 export type BriefStatus =
   | "not_generated"
@@ -38,7 +39,7 @@ function token() {
   return typeof window !== "undefined" ? (localStorage.getItem("token") ?? "") : "";
 }
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const t = token();
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
