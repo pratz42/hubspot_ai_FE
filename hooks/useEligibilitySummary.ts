@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { API_BASE_URL } from "@/lib/config";
 import type { EmailProviderConnection } from "./useEmailProviderStatus";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = API_BASE_URL;
 
 export interface AudienceSnapshot {
   id: string;

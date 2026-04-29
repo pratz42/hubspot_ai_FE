@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { API_BASE_URL } from "@/lib/config";
 
 export type ScoringStatus = "pending" | "scoring" | "scored" | "failed";
 
@@ -45,7 +46,7 @@ export function useScoreStream({
       try {
         setIsStreaming(true);
         const res = await fetch(
-          `http://localhost:8000/events/${entityType}s/${entityId}`,
+          `${API_BASE_URL}/events/${entityType}s/${entityId}`,
           {
             headers: {
               Accept: "text/event-stream",

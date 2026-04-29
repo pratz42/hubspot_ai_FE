@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { API_BASE_URL } from "@/lib/config";
 import type { CampaignSendStatus } from "./useCampaignSendStream";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = API_BASE_URL;
 const ACTIVE_STATUSES = new Set<CampaignSendStatus>(["queued", "sending", "paused"]);
 const POLL_INTERVAL_MS = 5_000;
 

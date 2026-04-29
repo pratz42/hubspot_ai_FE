@@ -308,7 +308,7 @@ function StepProgressBar({
   eligibleCount: number;
 }) {
 
-  const total = eligibleCount || step.recipientCount || 1;
+  const total = eligibleCount || 1;
   const done = sendMode === "drafts" ? draftedCount : sentCount;
   const pct = Math.min(100, Math.round(((done + failedCount) / total) * 100));
 

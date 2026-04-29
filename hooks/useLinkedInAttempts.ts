@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { API_BASE_URL } from "@/lib/config";
 import type { AudienceSnapshot } from "./useEligibilitySummary";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = API_BASE_URL;
 
 // Statuses that, once set optimistically, should not be overwritten by stale server data.
 const TERMINAL_ATTEMPT_STATUSES = new Set([
