@@ -1483,10 +1483,12 @@ export default function CampaignPage() {
       API.get(`/campaigns/${id}/linkedin-social/status`)
         .then((r) => {
           const d = r.data as { campaign: Record<string, unknown>; assets: unknown[] };
+          const planData = d.campaign.plan_data as Record<string, unknown> | undefined;
           setLsResult({
             campaign_id: id,
             campaign: d.campaign as LinkedInSocialCampaignData["campaign"],
             assets: mapLsAssets(d.assets),
+            strategy: planData?.strategy as LinkedInSocialCampaignData["strategy"] | undefined,
           });
         })
         .catch(console.error)

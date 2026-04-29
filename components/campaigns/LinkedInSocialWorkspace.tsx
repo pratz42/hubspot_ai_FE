@@ -215,7 +215,7 @@ function SocialStrategyCard({
 // then hand off to the parent-derived `analyzing` prop once the API call is in flight.
 
 function AnalysisPanel({
-  assetId, analyzing, analysis, onAnalyze, isPostPublished, campaignApproved,
+  assetId, analyzing, analysis, onAnalyze, isPostPublished, isRevisionPending, campaignApproved,
   onStageRevision, onApplyToLinkedIn,
 }: {
   assetId: number;
@@ -223,19 +223,16 @@ function AnalysisPanel({
   analysis?: LinkedInSocialAnalysis;
   onAnalyze: (id: number) => void;
   isPostPublished: boolean;
+  isRevisionPending: boolean;  // true = was published, now draft (external_id set, external_status = draft)
   campaignApproved: boolean;
   onStageRevision: (assetId: number, body: string, hashtags: string[], cta: string) => Promise<void>;
-  onApplyToLinkedIn: (assetId: number, body: string) => Promise<void>;
+  onApplyToLinkedIn: (assetId: number, body?: string) => Promise<void>;
 }) {
   const [visible, setVisible] = useState(false);
   const [localPending, setLocalPending] = useState(false);
-  // Step 1 — Stage for Approval
   const [staging, setStaging] = useState(false);
-  const [staged, setStaged] = useState(false);
   const [stageError, setStageError] = useState<string | null>(null);
-  // Step 2 — Apply to Post (publish to LinkedIn after approval)
   const [applying, setApplying] = useState(false);
-  const [applied, setApplied] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
 
   const isBusy = analyzing || localPending;
@@ -251,7 +248,7 @@ function AnalysisPanel({
       const hashtags = Array.isArray(revised.hashtags) ? revised.hashtags : [];
       const cta = analysis?.analysis?.recommended_changes?.cta ?? "";
       await onStageRevision(assetId, body, hashtags, cta);
-      setStaged(true);
+      // UI updates from server refresh — no local staged flag needed
     } catch (err) {
       setStageError(err instanceof Error ? err.message : "Failed to stage revision.");
     } finally {
@@ -259,7 +256,7 @@ function AnalysisPanel({
     }
   }
 
-  async function handleApplyToLinkedIn() {
+  async function handleApply() {
     const revised = analysis?.analysis?.revised_post;
     if (!revised?.body) return;
     const hashtags = Array.isArray(revised.hashtags) ? revised.hashtags : [];
@@ -268,7 +265,7 @@ function AnalysisPanel({
     setApplyError(null);
     try {
       await onApplyToLinkedIn(assetId, bodyWithHashtags);
-      setApplied(true);
+      setVisible(false); // collapse panel — post is live again; user can re-analyze for a new revision
     } catch (err) {
       setApplyError(err instanceof Error ? err.message : "Failed to update LinkedIn post. Please try again.");
     } finally {
@@ -383,7 +380,7 @@ function AnalysisPanel({
                   </div>
                 )}
 
-                {/* Revised post */}
+                {/* Revised post — actions derived entirely from server state */}
                 {analysis.analysis.revised_post?.body && (
                   <div className="space-y-2">
                     <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Revised Post</p>
@@ -399,8 +396,8 @@ function AnalysisPanel({
                       </div>
                     )}
 
-                    {/* Step 1 — Stage for Approval (only on published posts, before staging) */}
-                    {isPostPublished && !staged && !applied && (
+                    {/* Stage for Approval — post is currently live on LinkedIn */}
+                    {isPostPublished && (
                       <div className="pt-1 space-y-1.5">
                         <button
                           onClick={handleStage}
@@ -412,18 +409,16 @@ function AnalysisPanel({
                             : <><Pencil className="w-3 h-3" />Stage for Approval</>}
                         </button>
                         <p className="text-xs text-slate-400 leading-snug">
-                          Saves the revised draft and resets campaign to pending approval. Once approved, you can publish to LinkedIn.
+                          Saves the revised draft and resets approval. Once re-approved, use Apply to Post to update LinkedIn.
                         </p>
                         {stageError && (
-                          <p className="text-xs text-red-600 flex items-center gap-1">
-                            <X className="w-3 h-3" />{stageError}
-                          </p>
+                          <p className="text-xs text-red-600 flex items-center gap-1"><X className="w-3 h-3" />{stageError}</p>
                         )}
                       </div>
                     )}
 
-                    {/* Step 2 — Apply to Post (after staging; gated on campaign approval) */}
-                    {staged && !applied && (
+                    {/* Apply to Post — revision is staged (was published, now draft); gated on approval */}
+                    {isRevisionPending && (
                       <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2.5 space-y-2">
                         <div className="flex items-center gap-2">
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
@@ -432,7 +427,7 @@ function AnalysisPanel({
                         {campaignApproved ? (
                           <>
                             <button
-                              onClick={handleApplyToLinkedIn}
+                              onClick={handleApply}
                               disabled={applying}
                               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors disabled:opacity-50 w-full justify-center"
                             >
@@ -441,9 +436,7 @@ function AnalysisPanel({
                                 : <><Send className="w-3 h-3" />Apply to Post</>}
                             </button>
                             {applyError && (
-                              <p className="text-xs text-red-600 flex items-center gap-1">
-                                <X className="w-3 h-3" />{applyError}
-                              </p>
+                              <p className="text-xs text-red-600 flex items-center gap-1"><X className="w-3 h-3" />{applyError}</p>
                             )}
                           </>
                         ) : (
@@ -452,13 +445,6 @@ function AnalysisPanel({
                             Waiting for approval owner to approve before publishing to LinkedIn.
                           </p>
                         )}
-                      </div>
-                    )}
-
-                    {/* Done */}
-                    {applied && (
-                      <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 pt-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Published to LinkedIn with revised content.
                       </div>
                     )}
                   </div>
@@ -490,19 +476,21 @@ function AnalysisPanel({
 // ─── Post Card ────────────────────────────────────────────────────────────────
 
 function SocialPostCard({
-  asset, campaignId, isPostPublished, isPublishable, campaignApproved, onPublish,
-  onOpenStats, onAnalyze, onApplyRevision, onApplyToLinkedIn, analysis, analyzing,
+  asset, campaignId, isPostPublished, isRevisionPending, isPublishable, campaignApproved, onPublish,
+  onOpenStats, onAnalyze, onApplyRevision, onApplyToLinkedIn, onSaveSuccess, analysis, analyzing,
 }: {
   asset: LinkedInSocialAsset;
   campaignId: number;
   isPostPublished: boolean;
+  isRevisionPending: boolean;
   isPublishable: boolean;
   campaignApproved: boolean;
   onPublish: () => Promise<void>;
   onOpenStats: (assetId: number) => void;
   onAnalyze: (assetId: number) => void;
   onApplyRevision: (assetId: number, body: string, hashtags: string[], cta: string) => Promise<void>;
-  onApplyToLinkedIn: (assetId: number, body: string) => Promise<void>;
+  onApplyToLinkedIn: (assetId: number, body?: string) => Promise<void>;
+  onSaveSuccess: () => void;
   analysis?: LinkedInSocialAnalysis;
   analyzing: boolean;
 }) {
@@ -514,6 +502,8 @@ function SocialPostCard({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
 
   const postNum = asset.post_number ?? asset.sequence_step ?? 1;
   const isDirty = editBody !== asset.body || editCta !== (asset.cta ?? "");
@@ -541,6 +531,7 @@ function SocialPostCard({
         ...(editCta.trim() ? { cta: editCta.trim() } : {}),
       });
       setEditing(false);
+      onSaveSuccess();
     } catch (err) {
       setSaveError(getErrorMessage(err, "Save failed"));
     } finally {
@@ -725,15 +716,15 @@ function SocialPostCard({
                   analysis={analysis}
                   onAnalyze={onAnalyze}
                   isPostPublished={isPostPublished}
+                  isRevisionPending={isRevisionPending}
                   campaignApproved={campaignApproved}
                   onStageRevision={onApplyRevision}
                   onApplyToLinkedIn={onApplyToLinkedIn}
                 />
               </div>
 
-              {/* Sequence-step publish button — hidden when external_id is set,
-                  meaning this is a staged revision that must go via Apply to Post */}
-              {campaignApproved && isPublishable && !isPostPublished && !asset.external_id && (
+              {/* Sequence-step publish button — hidden for revision-pending posts */}
+              {campaignApproved && isPublishable && !isPostPublished && !isRevisionPending && (
                 <div className="pt-2 border-t border-slate-100">
                   <button
                     onClick={handlePublish}
@@ -747,6 +738,42 @@ function SocialPostCard({
                   {publishError && (
                     <p className="mt-2 text-xs text-red-600 flex items-center gap-1.5">
                       <AlertTriangle className="w-3.5 h-3.5" />{publishError}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Apply staged revision — post was published, revised, approved; ready to push update */}
+              {isRevisionPending && (
+                <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                  {campaignApproved ? (
+                    <>
+                      <button
+                        onClick={async () => {
+                          setApplying(true);
+                          setApplyError(null);
+                          try { await onApplyToLinkedIn(asset.id); }
+                          catch (err) { setApplyError(err instanceof Error ? err.message : "Failed to update LinkedIn post."); }
+                          finally { setApplying(false); }
+                        }}
+                        disabled={applying}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 transition-colors disabled:opacity-50 shadow-sm shadow-emerald-200"
+                      >
+                        {applying
+                          ? <><Loader2 className="w-4 h-4 animate-spin" />Applying…</>
+                          : <><Send className="w-4 h-4" />Apply Revision to LinkedIn</>}
+                      </button>
+                      <p className="text-xs text-slate-400 leading-snug">Revision approved — this will update your live LinkedIn post.</p>
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                      <p className="text-xs text-amber-700">Revision staged — awaiting approval before it can be applied to LinkedIn.</p>
+                    </div>
+                  )}
+                  {applyError && (
+                    <p className="text-xs text-red-600 flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5" />{applyError}
                     </p>
                   )}
                 </div>
@@ -858,10 +885,7 @@ interface Props {
 export function LinkedInSocialWorkspace({
   data, mode, onPublishSuccess, onOpenStats, onAnalyze, onDuplicate, analysis, analyzing,
 }: Props) {
-  // All useState calls first (Rules of Hooks)
-  const [localApprovalStatus, setLocalApprovalStatus] = useState<string | null>(null);
-  // Optimistic publish state from API response — avoids waiting for the background GET /status refresh
-  const [publishedAssetIds, setPublishedAssetIds] = useState<Set<number>>(new Set());
+  const [refreshing, setRefreshing] = useState(false);
 
   const campaign = data.status?.campaign ?? data.campaign;
   const assets = data.status?.assets ?? data.assets ?? [];
@@ -869,57 +893,41 @@ export function LinkedInSocialWorkspace({
   const campaignId = data.campaign_id ?? campaign.id;
   const orchestrationState = (campaign.orchestration_state as string) || "";
 
-  // Sort posts by sequence_step for ordered publishing
+  // All states derived directly from server data — no local overrides
   const sortedAssets = [...assets].sort((a, b) => (a.sequence_step ?? 1) - (b.sequence_step ?? 1));
-
-  // An asset is considered published if the DB says so OR if we got a "published" result from
-  // the most recent publish API call (avoids waiting for the background GET /status refresh)
-  const isAssetPublished = (a: LinkedInSocialAsset) =>
-    a.external_status === "published" || publishedAssetIds.has(a.id);
-
+  const isAssetPublished = (a: LinkedInSocialAsset) => a.external_status === "published";
+  // Revision pending = post was published (has external_id), then explicitly staged back to draft.
+  // "failed" is a failed publish attempt — treat it as re-publishable, not as a staged revision.
+  const isAssetRevisionPending = (a: LinkedInSocialAsset) => a.external_status === "draft" && !!a.external_id;
   const publishedCount = sortedAssets.filter(isAssetPublished).length;
   const allPostsPublished = sortedAssets.length > 0 && publishedCount === sortedAssets.length;
   const isPublished = orchestrationState === "linkedin_posts_published" || allPostsPublished;
+  const isApproved = (campaign.approval_status as string) === "approved";
 
-  const approvalStatus = localApprovalStatus ?? (campaign.approval_status as string) ?? "pending";
-  const isApproved = approvalStatus === "approved";
+  async function handleRefresh() {
+    setRefreshing(true);
+    try { await new Promise<void>((resolve) => { onPublishSuccess(null); setTimeout(resolve, 800); }); }
+    finally { setRefreshing(false); }
+  }
 
-  async function handleApplyToLinkedIn(assetId: number, body: string) {
-    // PATCH without approval_status — backend detects external_id is set and calls
-    // update_published_post (updates existing LinkedIn post, does NOT create a new one)
-    await API.patch(`/campaigns/${campaignId}/linkedin-social/assets/${assetId}`, { body });
+  function handleSaveSuccess() { onPublishSuccess(null); }
+
+  async function handleApplyToLinkedIn(assetId: number, body?: string) {
+    const payload = body ? { body } : {};
+    await API.patch(`/campaigns/${campaignId}/linkedin-social/assets/${assetId}`, payload);
     onPublishSuccess(null);
   }
 
   async function handleStageRevision(assetId: number, body: string, hashtags: string[], cta: string) {
-    const bodyWithHashtags = hashtags.length
-      ? `${body}\n\n${hashtags.join(" ")}`
-      : body;
+    const bodyWithHashtags = hashtags.length ? `${body}\n\n${hashtags.join(" ")}` : body;
     await API.patch(`/campaigns/${campaignId}/linkedin-social/assets/${assetId}`, {
-      body: bodyWithHashtags,
-      ...(cta ? { cta } : {}),
-      hashtags,
-      approval_status: "pending",
+      body: bodyWithHashtags, ...(cta ? { cta } : {}), hashtags, approval_status: "pending",
     });
-    // Asset is back to draft — remove it from the optimistic published set immediately
-    setPublishedAssetIds((prev) => { const next = new Set(prev); next.delete(assetId); return next; });
-    // Set approval to "pending" immediately — don't wait for GET /status to resolve
-    // so the ApprovalBar renders right away with the correct owner
-    setLocalApprovalStatus("pending");
-    // Refresh all data from server
     onPublishSuccess(null);
   }
 
   async function handlePublishPost() {
     const { data: res } = await API.post(`/campaigns/${campaignId}/linkedin-social/publish`);
-    const result = res as { results?: Array<{ asset_id: number; external_status: string }> };
-    if (result.results) {
-      const newPublished = new Set(publishedAssetIds);
-      for (const r of result.results) {
-        if (r.external_status === "published") newPublished.add(r.asset_id);
-      }
-      setPublishedAssetIds(newPublished);
-    }
     onPublishSuccess(res);
   }
 
@@ -952,6 +960,15 @@ export function LinkedInSocialWorkspace({
                 LinkedIn Social · {assets.length} post{assets.length !== 1 ? "s" : ""}
               </p>
             </div>
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="Refresh campaign"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-white/10 border border-white/10 transition-colors disabled:opacity-40 flex-shrink-0"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/15 text-blue-300 text-xs font-semibold border border-blue-500/20 flex-shrink-0">
                 <Sparkles className="w-3 h-3" /> AI Generated
@@ -1058,6 +1075,7 @@ export function LinkedInSocialWorkspace({
           ) : (
             sortedAssets.map((asset, idx) => {
               const isPostPublished = isAssetPublished(asset);
+              const isRevisionPending = isAssetRevisionPending(asset);
               const isPublishable = sortedAssets.slice(0, idx).every(isAssetPublished);
               return (
                 <SocialPostCard
@@ -1065,6 +1083,7 @@ export function LinkedInSocialWorkspace({
                   asset={asset}
                   campaignId={campaignId}
                   isPostPublished={isPostPublished}
+                  isRevisionPending={isRevisionPending}
                   isPublishable={isPublishable}
                   campaignApproved={isApproved}
                   onPublish={handlePublishPost}
@@ -1072,6 +1091,7 @@ export function LinkedInSocialWorkspace({
                   onAnalyze={onAnalyze}
                   onApplyRevision={handleStageRevision}
                   onApplyToLinkedIn={handleApplyToLinkedIn}
+                  onSaveSuccess={handleSaveSuccess}
                   analysis={analysis[asset.id]}
                   analyzing={analyzing.has(asset.id)}
                 />
@@ -1134,7 +1154,7 @@ export function LinkedInSocialWorkspace({
         <ApprovalBar
           campaignId={campaignId}
           approvalOwner={campaign.approval_owner as string | undefined}
-          onApproved={() => setLocalApprovalStatus("approved")}
+          onApproved={() => onPublishSuccess(null)}
         />
       )}
     </div>
