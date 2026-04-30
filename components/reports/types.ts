@@ -266,6 +266,60 @@ export interface ActivityReport {
   last_updated: string;
 }
 
+// ── Revenue Forecast ───────────────────────────────────────────────────────
+
+export interface DealContributionRow {
+  deal_id: number;
+  name: string;
+  amount: number;
+  probability: number;      // normalised 0-1
+  weighted_value: number;
+  close_date?: string;
+  stage_name?: string;
+  owner_name?: string;
+}
+
+export interface RiskIndicator {
+  type: string;
+  label: string;
+  count: number;
+  severity: "info" | "warning" | "critical";
+}
+
+export interface OwnerForecastRow {
+  owner_name: string;
+  open_deals_count: number;
+  weighted_value: number;
+  avg_probability: number;  // normalised 0-1
+}
+
+export interface StageForecastRow {
+  stage_name: string;
+  color?: string;
+  deal_count: number;
+  total_amount: number;
+  weighted_value: number;
+}
+
+export interface RevenueForecastReport {
+  months: string[];
+  forecast: number[];
+  unweighted_pipeline: number[];
+  weighted_pipeline: number;
+  open_deals_count: number;
+  avg_deal_size: number;
+  avg_probability: number;  // normalised 0-1
+  forecast_this_month: number;
+  forecast_next_3_months: number;
+  forecast_next_6_months: number;
+  monthly_chart: ChartData;
+  deal_contributions: DealContributionRow[];
+  risk_indicators: RiskIndicator[];
+  owner_breakdown: OwnerForecastRow[];
+  stage_breakdown: StageForecastRow[];
+  last_updated_at: string;
+}
+
 // ── Custom Dashboard ───────────────────────────────────────────────────────
 
 export interface DashboardWidgetConfig {

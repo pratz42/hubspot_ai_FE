@@ -91,6 +91,7 @@ export default function ReportsPage() {
       return (
         <SalesDashboard
           data={data as SalesReport}
+          filters={filters}
           onStageClick={(stage) => updateFilter("deal_stage_id", stage)}
         />
       );
