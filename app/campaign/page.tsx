@@ -1718,7 +1718,12 @@ export default function CampaignPage() {
       const { data } = await API.post(`/campaigns/${campaignId}/linkedin-social/assets/${assetId}/performance/analyze`);
       setLsAnalysis((prev) => ({ ...prev, [assetId]: data as LinkedInSocialAnalysis }));
     } catch {
-      setLsAnalysis((prev) => ({ ...prev, [assetId]: { summary: "Analysis failed. Please try again." } }));
+      setLsAnalysis((prev) => ({
+        ...prev,
+        [assetId]: {
+          analysis: { performance_summary: "Analysis failed. Please try again." },
+        },
+      }));
     } finally {
       setLsAnalyzing((prev) => { const n = new Set(prev); n.delete(assetId); return n; });
     }
