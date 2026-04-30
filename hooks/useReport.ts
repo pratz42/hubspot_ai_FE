@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import API from "@/lib/api";
 import type { ReportSection, ReportFilters } from "./useReportFilters";
 
@@ -17,7 +17,7 @@ const SECTION_ENDPOINTS: Record<ReportSection, string> = {
 
 export interface ReportState<T> {
   data: T | null;
-  dataSection: ReportSection | null;   // which section this data was fetched for
+  dataSection: ReportSection | null;
   loading: boolean;
   error: string | null;
   lastUpdated: Date | null;
@@ -28,59 +28,44 @@ export function useReport<T = unknown>(
   section: ReportSection,
   filters: ReportFilters,
 ): ReportState<T> {
-  const [data, setData]                       = useState<T | null>(null);
-  const [dataSection, setDataSection]         = useState<ReportSection | null>(null);
-  const [loading, setLoading]                 = useState(false);
-  const [error, setError]                     = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated]         = useState<Date | null>(null);
-  const abortRef                              = useRef<AbortController | null>(null);
-  const lastFetchKey                          = useRef<string>("");
+  const [data, setData]               = useState<T | null>(null);
+  const [dataSection, setDataSection] = useState<ReportSection | null>(null);
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  // tick is incremented by refetch() to force a re-fetch with the same deps
+  const [tick, setTick]               = useState(0);
 
-  const fetchData = useCallback(async () => {
+  useEffect(() => {
     const endpoint = SECTION_ENDPOINTS[section];
-
     const params: Record<string, string> = {};
     (Object.entries(filters) as [keyof ReportFilters, string][]).forEach(
       ([k, v]) => { if (v) params[k] = v; },
     );
 
-    const fetchKey = `${endpoint}:${JSON.stringify(params)}`;
-    if (fetchKey === lastFetchKey.current) return;
-    lastFetchKey.current = fetchKey;
-
-    abortRef.current?.abort();
     const controller = new AbortController();
-    abortRef.current = controller;
-
     setLoading(true);
     setError(null);
 
-    try {
-      const res = await API.get(endpoint, { params, signal: controller.signal });
-      setData(res.data as T);
-      setDataSection(section);       // record which section this data belongs to
-      setLastUpdated(new Date());
-    } catch (err: unknown) {
-      const e = err as { name?: string; response?: { data?: { detail?: string } }; message?: string };
-      if (e.name === "CanceledError" || e.name === "AbortError") {
-        lastFetchKey.current = "";   // allow retry after cancellation
-        return;
-      }
-      setError(e.response?.data?.detail ?? e.message ?? "Failed to load report");
-    } finally {
-      setLoading(false);
-    }
-  }, [section, filters]);
+    API.get(endpoint, { params, signal: controller.signal })
+      .then((res) => {
+        setData(res.data as T);
+        setDataSection(section);
+        setLastUpdated(new Date());
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        // Ignore cancellations from effect cleanup or section/filter changes
+        if (controller.signal.aborted) return;
+        const e = err as { response?: { data?: { detail?: string } }; message?: string };
+        setError(e.response?.data?.detail ?? e.message ?? "Failed to load report");
+        setLoading(false);
+      });
 
-  useEffect(() => {
-    fetchData();
-    return () => { abortRef.current?.abort(); };
-  }, [fetchData]);
+    return () => { controller.abort(); };
+  }, [section, filters, tick]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const refetch = useCallback(() => {
-    lastFetchKey.current = "";
-    fetchData();
-  }, [fetchData]);
+  const refetch = useCallback(() => setTick((t) => t + 1), []);
 
   return { data, dataSection, loading, error, lastUpdated, refetch };
 }

@@ -34,12 +34,16 @@ import {
   RotateCcw,
   X,
   Lock,
+  Newspaper,
 } from "lucide-react";
 import API from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import { CampaignSendPanel, CONTENT_LOCKED_STATUSES } from "@/components/campaigns/CampaignSendPanel";
 import { CampaignActivityFeed } from "@/components/campaigns/CampaignActivityFeed";
 import type { CampaignSendStatus } from "@/hooks/useCampaignSendStream";
+import { LinkedInSocialCreateForm, type LinkedInSocialForm } from "@/components/campaigns/LinkedInSocialCreateForm";
+import { LinkedInSocialWorkspace, type LinkedInSocialCampaignData, type LinkedInSocialAnalysis } from "@/components/campaigns/LinkedInSocialWorkspace";
+import { LinkedInSocialStatsDrawer, type AssetStats } from "@/components/campaigns/LinkedInSocialStatsDrawer";
 
 const DRAFT_EXISTS_STATES = new Set([
   "emails_generated", "qa_passed", "drafts_approved", "drafts_rejected",
@@ -152,8 +156,8 @@ interface CampaignResult {
   status: CampaignStatusDetail;
 }
 
-type Step = "list" | "type" | "details" | "targets" | "generating" | "results" | "view";
-type CampaignType = "email" | "linkedin";
+type Step = "list" | "type" | "details" | "targets" | "generating" | "results" | "view" | "ls_create" | "ls_generating" | "ls_workspace" | "ls_view";
+type CampaignType = "email" | "linkedin" | "linkedin_social";
 
 const EMAIL_TONES = ["consultative", "authoritative", "friendly", "urgent", "educational"];
 const LINKEDIN_TONES = ["professional", "casual", "authoritative", "empathetic"];
@@ -164,6 +168,14 @@ const GENERATING_STEPS = [
   { label: "Building AI strategy", icon: Brain },
   { label: "Crafting personalized messages", icon: Sparkles },
   { label: "Running quality assurance checks", icon: CheckCircle2 },
+];
+
+const LS_GENERATING_STEPS = [
+  { label: "Creating campaign record", icon: Hash },
+  { label: "Building post themes", icon: Brain },
+  { label: "Writing post drafts", icon: Sparkles },
+  { label: "Preparing publishing plan", icon: Calendar },
+  { label: "Finalizing assets", icon: CheckCircle2 },
 ];
 
 const ORCH_LABELS: Record<string, string> = {
@@ -1340,6 +1352,23 @@ export default function CampaignPage() {
   const [approving, setApproving] = useState(false);
   const [approved, setApproved] = useState<boolean | null>(null);
 
+  // LinkedIn Social flow
+  const [lsForm, setLsForm] = useState<LinkedInSocialForm>({
+    campaign_name: "", objective: "", approval_owner: "", tone: "",
+    post_count: 5, campaign_theme: "",
+    focus_mode: "", focus_industry: "", focus_product: "",
+    cta_preference: "", include_video: false, include_image: true,
+    constraints: "", success_metrics: "",
+  });
+  const [lsResult, setLsResult] = useState<LinkedInSocialCampaignData | null>(null);
+  const [lsGenError, setLsGenError] = useState("");
+  const [lsGenStepIdx, setLsGenStepIdx] = useState(0);
+  const lsGenIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [lsStatsAssetId, setLsStatsAssetId] = useState<number | null>(null);
+  const [lsStatsExisting, setLsStatsExisting] = useState<AssetStats | undefined>(undefined);
+  const [lsAnalysis, setLsAnalysis] = useState<Record<number, LinkedInSocialAnalysis>>({});
+  const [lsAnalyzing, setLsAnalyzing] = useState<Set<number>>(new Set());
+
   const detailsValid = form.campaign_name.trim() !== "" && form.objective.trim() !== "" && form.approval_owner.trim() !== "";
   const totalSelected = selectedLeads.size + selectedContacts.size;
   const setField = (key: keyof typeof form, value: string | number) => setForm((f) => ({ ...f, [key]: value }));
@@ -1359,9 +1388,9 @@ export default function CampaignPage() {
     API.get("/auth/me").then((r) => setCurrentUserEmail(r.data?.email || "")).catch(() => {});
   }, []);
 
-  // Fetch valid approval users when entering details step
+  // Fetch valid approval users when entering details step or LinkedIn Social create
   useEffect(() => {
-    if (step !== "details" || approvalUsers.length > 0) return;
+    if ((step !== "details" && step !== "ls_create") || approvalUsers.length > 0) return;
     setLoadingApprovalUsers(true);
     setApprovalUsersError("");
     API.get("/auth/users")
@@ -1428,7 +1457,40 @@ export default function CampaignPage() {
       .finally(() => setLoadingAiSummary(false));
   };
 
+  // Stats are stored inside external_metadata.manual_linkedin_stats by the backend.
+  // Map them to the top-level `stats` field that the workspace components expect.
+  function mapLsAssets(raw: unknown[]): LinkedInSocialCampaignData["assets"] {
+    return (raw ?? []).map((a) => {
+      const asset = a as Record<string, unknown>;
+      const meta = (asset.external_metadata as Record<string, unknown>) ?? {};
+      const stats = (meta.manual_linkedin_stats as LinkedInSocialCampaignData["assets"][number]["stats"]) ?? undefined;
+      return { ...asset, stats } as LinkedInSocialCampaignData["assets"][number];
+    });
+  }
+
   const handleViewCampaign = (id: number, type?: string) => {
+    if (type === "linkedin_social") {
+      setLsResult(null);
+      setLsAnalysis({});
+      setLsAnalyzing(new Set());
+      setLsStatsAssetId(null);
+      setLoadingView(true);
+      setStep("ls_view");
+      API.get(`/campaigns/${id}/linkedin-social/status`)
+        .then((r) => {
+          const d = r.data as { campaign: Record<string, unknown>; assets: unknown[] };
+          const planData = d.campaign.plan_data as Record<string, unknown> | undefined;
+          setLsResult({
+            campaign_id: id,
+            campaign: d.campaign as LinkedInSocialCampaignData["campaign"],
+            assets: mapLsAssets(d.assets),
+            strategy: planData?.strategy as LinkedInSocialCampaignData["strategy"] | undefined,
+          });
+        })
+        .catch(console.error)
+        .finally(() => setLoadingView(false));
+      return;
+    }
     setCampaignType((type as CampaignType) || "email");
     setViewApproved(null);
     setSendContentLocked(false);
@@ -1550,6 +1612,118 @@ export default function CampaignPage() {
     } catch (err) { console.error(err); }
   };
 
+  const handleLsGenerate = async () => {
+    setLsGenError("");
+    setLsGenStepIdx(0);
+    setStep("ls_generating");
+    let i = 0;
+    lsGenIntervalRef.current = setInterval(() => {
+      i += 1;
+      if (i < LS_GENERATING_STEPS.length - 1) setLsGenStepIdx(i);
+      else clearInterval(lsGenIntervalRef.current!);
+    }, 2200);
+    const payload: Record<string, unknown> = {
+      campaign_name: lsForm.campaign_name,
+      objective: lsForm.objective,
+      approval_owner: lsForm.approval_owner,
+      tone: lsForm.tone || "professional",
+      post_count: lsForm.post_count,
+      include_video: lsForm.include_video,
+      include_image: lsForm.include_image,
+    };
+    if (lsForm.campaign_theme.trim()) payload.campaign_theme = lsForm.campaign_theme.trim();
+    if (lsForm.focus_mode) payload.focus_mode = lsForm.focus_mode;
+    if (lsForm.focus_industry.trim()) payload.focus_industry = lsForm.focus_industry.trim();
+    if (lsForm.focus_product.trim()) payload.focus_product = lsForm.focus_product.trim();
+    if (lsForm.cta_preference.trim()) payload.cta_preference = lsForm.cta_preference.trim();
+    const constraintsList = lsForm.constraints.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (constraintsList.length) payload.constraints = constraintsList;
+    const metricsList = lsForm.success_metrics.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (metricsList.length) payload.success_metrics = metricsList;
+    try {
+      const { data } = await API.post("/campaigns/linkedin-social/create-and-generate", payload);
+      if (lsGenIntervalRef.current) clearInterval(lsGenIntervalRef.current);
+      setLsResult(data as LinkedInSocialCampaignData);
+      setLsGenStepIdx(LS_GENERATING_STEPS.length - 1);
+      setTimeout(() => { setStep("ls_workspace"); fetchCampaigns(); }, 700);
+    } catch (err) {
+      if (lsGenIntervalRef.current) clearInterval(lsGenIntervalRef.current);
+      setLsGenError(getErrorMessage(err, "Generation failed. Please try again."));
+      setStep("ls_create");
+    }
+  };
+
+  const handleLsPublishSuccess = () => {
+    fetchCampaigns();
+    const campaignId = lsResult?.campaign_id ?? lsResult?.campaign?.id;
+    if (campaignId) {
+      API.get(`/campaigns/${campaignId}/linkedin-social/status`)
+        .then((r) => {
+          const d = r.data as { campaign: Record<string, unknown>; assets: unknown[] };
+          const freshAssets = mapLsAssets(d.assets);
+          const freshCampaign = d.campaign as LinkedInSocialCampaignData["campaign"];
+          setLsResult((prev) => prev ? {
+            ...prev,
+            campaign: freshCampaign,
+            assets: freshAssets,
+            status: prev.status ? { ...prev.status, campaign: freshCampaign, assets: freshAssets } : prev.status,
+          } : prev);
+        })
+        .catch(() => {});
+    }
+  };
+
+  const handleLsDuplicate = () => {
+    if (lsResult) {
+      const c = lsResult.campaign as Record<string, unknown>;
+      setLsForm((prev) => ({
+        ...prev,
+        campaign_name: `${(c.name as string) || prev.campaign_name} (copy)`,
+        objective: (c.objective as string) || prev.objective,
+          campaign_theme: (c.campaign_theme as string) || prev.campaign_theme,
+      }));
+    }
+    setLsResult(null);
+    setLsAnalysis({});
+    setLsAnalyzing(new Set());
+    setStep("ls_create");
+  };
+
+  const handleLsOpenStats = (assetId: number) => {
+    const asset = lsResult?.assets?.find((a) => a.id === assetId) ?? lsResult?.status?.assets?.find((a) => a.id === assetId);
+    const meta = (asset as Record<string, unknown> | undefined)?.external_metadata as Record<string, unknown> | undefined;
+    const existingStats = (asset?.stats ?? meta?.manual_linkedin_stats) as AssetStats | undefined;
+    setLsStatsExisting(existingStats);
+    setLsStatsAssetId(assetId);
+  };
+
+  const handleLsStatsSaved = (assetId: number, stats: AssetStats) => {
+    setLsResult((prev) => {
+      if (!prev) return prev;
+      const updateAssets = (arr: LinkedInSocialCampaignData["assets"]) =>
+        arr.map((a) => a.id === assetId ? { ...a, stats } : a);
+      return {
+        ...prev,
+        assets: updateAssets(prev.assets ?? []),
+        status: prev.status ? { ...prev.status, assets: updateAssets(prev.status.assets ?? []) } : prev.status,
+      };
+    });
+  };
+
+  const handleLsAnalyze = async (assetId: number) => {
+    if (!lsResult) return;
+    const campaignId = lsResult.campaign_id ?? lsResult.campaign?.id;
+    setLsAnalyzing((prev) => new Set(prev).add(assetId));
+    try {
+      const { data } = await API.post(`/campaigns/${campaignId}/linkedin-social/assets/${assetId}/performance/analyze`);
+      setLsAnalysis((prev) => ({ ...prev, [assetId]: data as LinkedInSocialAnalysis }));
+    } catch {
+      setLsAnalysis((prev) => ({ ...prev, [assetId]: { summary: "Analysis failed. Please try again." } }));
+    } finally {
+      setLsAnalyzing((prev) => { const n = new Set(prev); n.delete(assetId); return n; });
+    }
+  };
+
   const handleReset = () => {
     setStep("list");
     setCampaignType("email");
@@ -1558,12 +1732,21 @@ export default function CampaignPage() {
     setResult(null); setGenError(""); setApproved(null);
     setViewingStatus(null); setAiSummary(null); setAiSummaryError("");
     setAssetApprovals({}); setApprovingAssetId(null);
+    // LinkedIn Social
+    setLsForm({ campaign_name: "", objective: "", approval_owner: "", tone: "", post_count: 5, campaign_theme: "", focus_mode: "", focus_industry: "", focus_product: "", cta_preference: "", include_video: false, include_image: true, constraints: "", success_metrics: "" });
+    setLsResult(null); setLsGenError(""); setLsGenStepIdx(0);
+    setLsStatsAssetId(null); setLsStatsExisting(undefined);
+    setLsAnalysis({}); setLsAnalyzing(new Set());
+    if (lsGenIntervalRef.current) clearInterval(lsGenIntervalRef.current);
   };
 
   const isWizard = ["type", "details", "targets", "generating"].includes(step);
   const isResults = step === "results";
   const isView = step === "view";
   const isList = step === "list";
+  const isLsCreate = step === "ls_create";
+  const isLsGenerating = step === "ls_generating";
+  const isLsWorkspace = step === "ls_workspace" || step === "ls_view";
 
   // ══════════════════════════════════════════════════════════════════════════
   return (
@@ -1575,7 +1758,7 @@ export default function CampaignPage() {
           <p className="text-sm text-slate-500 mt-0.5">Generate personalized outreach at scale, powered by AI</p>
         </div>
         <div className="flex items-center gap-2">
-          {(isResults || isView || isWizard) && (
+          {(isResults || isView || isWizard || isLsCreate || isLsGenerating || isLsWorkspace) && (
             <Button onClick={handleReset} variant="outline" className="gap-2 border-slate-200 text-slate-700 text-sm">
               <ArrowLeft className="w-4 h-4" /> All Campaigns
             </Button>
@@ -1638,15 +1821,20 @@ export default function CampaignPage() {
               </div>
               <div className="divide-y divide-slate-100">
                 {campaigns.map((c) => {
-                  const isEmail = c.type !== "linkedin";
-                  const orchLabel = ORCH_LABELS[c.orchestration_state || ""] || c.orchestration_state || "Draft";
+                  const isLinkedInSocial = c.type === "linkedin_social";
+                  const isEmail = !isLinkedInSocial && c.type !== "linkedin";
+                  const orchLabel = isLinkedInSocial
+                    ? (c.orchestration_state?.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase()) || "Draft")
+                    : (ORCH_LABELS[c.orchestration_state || ""] || c.orchestration_state || "Draft");
                   return (
-                    <div key={c.id} className={`flex items-center gap-4 px-5 py-4 hover:bg-slate-50 transition-colors group ${listRowBackground(c.send_status)}`}>
+                    <div key={c.id} className={`flex items-center gap-4 px-5 py-4 hover:bg-slate-50 transition-colors group ${isLinkedInSocial ? "" : listRowBackground(c.send_status)}`}>
                       {/* Type icon */}
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${isEmail ? "bg-orange-100" : "bg-blue-100"}`}>
-                        {isEmail
-                          ? <Mail className="w-4 h-4 text-orange-600" />
-                          : <Link2 className="w-4 h-4 text-blue-600" />}
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${isLinkedInSocial ? "bg-violet-100" : isEmail ? "bg-orange-100" : "bg-blue-100"}`}>
+                        {isLinkedInSocial
+                          ? <Newspaper className="w-4 h-4 text-violet-600" />
+                          : isEmail
+                            ? <Mail className="w-4 h-4 text-orange-600" />
+                            : <Link2 className="w-4 h-4 text-blue-600" />}
                       </div>
 
                       {/* Name + goal + send counts */}
@@ -1670,16 +1858,16 @@ export default function CampaignPage() {
                       </div>
 
                       {/* Send status badge (if send has been started) */}
-                      {sendStatusBadge(c.send_status)}
+                      {!isLinkedInSocial && sendStatusBadge(c.send_status)}
 
                       {/* Orchestration state badge */}
-                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0 ${orchStateColor(c.orchestration_state)}`}>
+                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0 ${isLinkedInSocial ? "bg-violet-100 text-violet-700" : orchStateColor(c.orchestration_state)}`}>
                         {orchLabel}
                       </span>
 
                       {/* Type badge */}
-                      <span className={`text-xs font-medium px-2.5 py-1 rounded-full border flex-shrink-0 ${isEmail ? "bg-orange-50 text-orange-700 border-orange-100" : "bg-blue-50 text-blue-700 border-blue-100"}`}>
-                        {isEmail ? "Email" : "LinkedIn"}
+                      <span className={`text-xs font-medium px-2.5 py-1 rounded-full border flex-shrink-0 ${isLinkedInSocial ? "bg-violet-50 text-violet-700 border-violet-100" : isEmail ? "bg-orange-50 text-orange-700 border-orange-100" : "bg-blue-50 text-blue-700 border-blue-100"}`}>
+                        {isLinkedInSocial ? "LinkedIn Social" : isEmail ? "Email" : "LinkedIn"}
                       </span>
 
                       {/* Date */}
@@ -1835,11 +2023,11 @@ export default function CampaignPage() {
             approved={approved}
           />
           {/* Send panel — visible once drafts exist; locks send when not yet approved */}
-          {DRAFT_EXISTS_STATES.has(result.status.campaign.orchestration_state ?? "") && (
+          {DRAFT_EXISTS_STATES.has((result.status.campaign.orchestration_state as string) ?? "") && (
             <CampaignSendPanel
               campaignId={result.campaign_id}
-              campaignType={campaignType}
-              approvalStatus={result.status.campaign.approval_status}
+              campaignType={campaignType as "email" | "linkedin"}
+              approvalStatus={result.status.campaign.approval_status as string | null | undefined}
               currentUserEmail={currentUserEmail}
               approvalOwner={result.status.campaign.approval_owner as string | undefined}
               onSendStarted={fetchCampaigns}
@@ -1848,6 +2036,85 @@ export default function CampaignPage() {
           )}
           <CampaignActivityFeed campaignId={result.campaign_id} />
         </>
+      )}
+
+      {/* ── LINKEDIN SOCIAL: Create form ──────────────────────────────── */}
+      {isLsCreate && (
+        <div className="max-w-2xl mx-auto">
+          <LinkedInSocialCreateForm
+            form={lsForm}
+            onChange={(patch) => setLsForm((f) => ({ ...f, ...patch }))}
+            users={approvalUsers}
+            loadingUsers={loadingApprovalUsers}
+            usersError={approvalUsersError}
+            onBack={() => setStep("type")}
+            onGenerate={handleLsGenerate}
+            generating={false}
+            genError={lsGenError}
+          />
+        </div>
+      )}
+
+      {/* ── LINKEDIN SOCIAL: Generating ───────────────────────────────── */}
+      {isLsGenerating && (
+        <div className="max-w-lg mx-auto py-12 space-y-6">
+          <div className="text-center space-y-2">
+            <div className="w-14 h-14 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center mx-auto mb-4">
+              <Sparkles className="w-7 h-7 text-blue-500" />
+            </div>
+            <p className="text-base font-semibold text-slate-800">AI is preparing your LinkedIn Social campaign</p>
+            <p className="text-sm text-slate-400">This usually takes 20–45 seconds</p>
+          </div>
+          <div className="space-y-2">
+            {LS_GENERATING_STEPS.map(({ label, icon: Icon }, i) => {
+              const done = i < lsGenStepIdx, active = i === lsGenStepIdx;
+              return (
+                <div key={i} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-300 ${active ? "bg-blue-50 border border-blue-200" : done ? "opacity-60" : "opacity-30"}`}>
+                  {done ? <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" /> : active ? <Loader2 className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" /> : <Icon className="w-4 h-4 text-slate-300 flex-shrink-0" />}
+                  <span className={`text-sm font-medium ${active ? "text-blue-700" : done ? "text-slate-500" : "text-slate-400"}`}>{label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── LINKEDIN SOCIAL: Workspace / View ─────────────────────────── */}
+      {isLsWorkspace && (
+        <div className="space-y-5">
+          {loadingView && step === "ls_view" ? (
+            <div className="flex items-center justify-center py-24 gap-2 text-slate-400">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-sm">Loading campaign…</span>
+            </div>
+          ) : lsResult ? (
+            <LinkedInSocialWorkspace
+              data={lsResult}
+              mode={step === "ls_workspace" ? "generated" : "history"}
+              onPublishSuccess={handleLsPublishSuccess}
+              onOpenStats={handleLsOpenStats}
+              onAnalyze={handleLsAnalyze}
+              onDuplicate={handleLsDuplicate}
+              analysis={lsAnalysis}
+              analyzing={lsAnalyzing}
+            />
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-200 p-16 text-center">
+              <p className="text-sm text-slate-400">Could not load campaign details</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Stats drawer (portal-style) */}
+      {lsStatsAssetId !== null && lsResult && (
+        <LinkedInSocialStatsDrawer
+          campaignId={lsResult.campaign_id ?? lsResult.campaign?.id}
+          assetId={lsStatsAssetId}
+          existingStats={lsStatsExisting}
+          onClose={() => { setLsStatsAssetId(null); setLsStatsExisting(undefined); }}
+          onSaved={handleLsStatsSaved}
+        />
       )}
 
       {/* ── WIZARD: two-col layout ─────────────────────────────────────── */}
@@ -1861,10 +2128,10 @@ export default function CampaignPage() {
             {/* ── TYPE ─────────────────────────────────────────────────── */}
             {step === "type" && (
               <div className="space-y-4 flex flex-col justify-center h-full">
-                <p className="text-sm text-slate-600 font-medium">Choose your outreach channel:</p>
+                <p className="text-sm text-slate-600 font-medium">Choose your campaign type:</p>
                 {[
                   { type: "email" as CampaignType, icon: Mail, title: "Email Campaign", desc: "Personalized multi-step email sequences crafted per recipient with subject lines, body, and CTA.", iconBg: "bg-orange-100", iconColor: "text-orange-600", hover: "hover:border-orange-300", ctaColor: "text-orange-600" },
-                  { type: "linkedin" as CampaignType, icon: Link2, title: "LinkedIn Campaign", desc: "Connection + conversation sequences tailored to each prospect's role and industry.", iconBg: "bg-blue-100", iconColor: "text-blue-600", hover: "hover:border-blue-300", ctaColor: "text-blue-600" },
+                  { type: "linkedin" as CampaignType, icon: Link2, title: "LinkedIn Outreach Campaign", desc: "Connection + conversation sequences tailored to each prospect's role and industry.", iconBg: "bg-blue-100", iconColor: "text-blue-600", hover: "hover:border-blue-300", ctaColor: "text-blue-600" },
                 ].map((opt) => (
                   <button key={opt.type} onClick={() => { setCampaignType(opt.type); setStep("details"); }}
                     className={`group relative overflow-hidden w-full rounded-xl border-2 border-slate-200 bg-white p-6 text-left ${opt.hover} hover:shadow-md transition-all`}>
@@ -1882,6 +2149,33 @@ export default function CampaignPage() {
                     </div>
                   </button>
                 ))}
+                {/* LinkedIn Social — separate flow */}
+                <button
+                  onClick={() => { setCampaignType("linkedin_social"); setStep("ls_create"); }}
+                  className="group relative overflow-hidden w-full rounded-xl border-2 border-slate-200 bg-white p-6 text-left hover:border-violet-300 hover:shadow-md transition-all"
+                >
+                  <div className="absolute inset-0 bg-[radial-gradient(ellipse_70%_70%_at_110%_110%,rgba(124,58,237,0.06)_0%,transparent_70%)]" />
+                  <div className="relative flex items-start gap-4">
+                    <div className="w-11 h-11 rounded-xl bg-violet-100 flex items-center justify-center flex-shrink-0">
+                      <Newspaper className="w-5 h-5 text-violet-600" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-base font-bold text-slate-900">LinkedIn Social Post</h3>
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">New</span>
+                      </div>
+                      <p className="text-sm text-slate-500 leading-relaxed">Publish AI-generated LinkedIn posts from your personal account. Ideal for brand awareness and thought leadership.</p>
+                      <div className="flex items-center gap-2 mt-3 flex-wrap">
+                        {["Create drafts", "Review & edit", "Publish", "Track analytics"].map((t) => (
+                          <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-violet-50 text-violet-600 border border-violet-100 font-medium">{t}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 font-semibold text-sm mt-1 flex-shrink-0 text-violet-600">
+                      Select <ArrowRight className="w-4 h-4" />
+                    </div>
+                  </div>
+                </button>
               </div>
             )}
 
