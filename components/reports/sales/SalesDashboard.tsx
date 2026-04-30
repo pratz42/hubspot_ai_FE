@@ -9,6 +9,8 @@ import { FunnelChart } from "@/components/reports/charts/FunnelChart";
 import { DonutChart } from "@/components/reports/charts/DonutChart";
 import { HorizontalBars } from "@/components/reports/charts/HorizontalBars";
 import type { HBarRow } from "@/components/reports/charts/HorizontalBars";
+import { RevenueForecastSection } from "@/components/reports/sales/RevenueForecastSection";
+import type { ReportFilters } from "@/hooks/useReportFilters";
 
 // ── KPI Row ────────────────────────────────────────────────────────────────
 
@@ -160,10 +162,11 @@ function RepLeaderboard({ reps }: { reps: RepPerformanceRow[] }) {
 
 interface Props {
   data: SalesReport;
+  filters: ReportFilters;
   onStageClick?: (stage: string) => void;
 }
 
-export function SalesDashboard({ data, onStageClick }: Props) {
+export function SalesDashboard({ data, filters, onStageClick }: Props) {
   const funnelStages = data.funnel.labels.map((label, i) => ({
     label,
     value: data.funnel.series[0]?.data[i] ?? 0,
@@ -179,6 +182,9 @@ export function SalesDashboard({ data, onStageClick }: Props) {
 
   return (
     <div className="flex flex-col gap-5">
+      {/* Revenue Forecast — prominent first section */}
+      <RevenueForecastSection filters={filters} />
+
       {/* KPI Row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {data.kpis.map((tile, i) => (
