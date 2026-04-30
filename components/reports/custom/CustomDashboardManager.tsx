@@ -36,6 +36,12 @@ const TEMPLATE_LAYOUTS: Record<string, DashboardWidgetConfig[]> = {
     { widget_id: "email_engagement",  type: "bar",    title: "Email Engagement", report_source: "campaigns" },
     { widget_id: "channel_breakdown", type: "donut",  title: "Channel Breakdown",report_source: "campaigns" },
   ],
+  "Revenue Forecast": [
+    { widget_id: "forecast_kpis",   type: "kpi",      title: "Forecast KPIs",      report_source: "revenue_forecast" },
+    { widget_id: "forecast_chart",  type: "line",     title: "Forecast by Month",  report_source: "revenue_forecast" },
+    { widget_id: "forecast_deals",  type: "table",    title: "Top Forecast Deals", report_source: "revenue_forecast" },
+    { widget_id: "forecast_risks",  type: "insights", title: "Risk Insights",      report_source: "revenue_forecast" },
+  ],
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -78,6 +84,12 @@ const TEMPLATES = [
     description: "Send funnel, engagement rates, top campaigns",
     icon: Megaphone,
     color: "#a78bfa",
+  },
+  {
+    name: "Revenue Forecast",
+    description: "Weighted pipeline, monthly forecast chart, top deals, risk insights",
+    icon: TrendingUp,
+    color: "#6366f1",
   },
 ];
 

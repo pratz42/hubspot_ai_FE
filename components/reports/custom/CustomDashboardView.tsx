@@ -12,12 +12,15 @@ import type {
   SalesReport,
   LeadsContactsReport,
   CampaignsReport,
+  RevenueForecastReport,
 } from "@/components/reports/types";
+import { fmtKPI, chartColor } from "@/components/reports/types";
 import { WidgetCard, WidgetSkeleton, WidgetEmpty, KPICard } from "@/components/reports/WidgetCard";
 import { LineChart }       from "@/components/reports/charts/LineChart";
 import { BarChart }        from "@/components/reports/charts/BarChart";
 import { DonutChart }      from "@/components/reports/charts/DonutChart";
 import { FunnelChart }     from "@/components/reports/charts/FunnelChart";
+import { HorizontalBars }  from "@/components/reports/charts/HorizontalBars";
 import API from "@/lib/api";
 
 // ── Widget registry ────────────────────────────────────────────────────────
@@ -39,6 +42,12 @@ const WIDGET_ENDPOINT: Record<string, string> = {
   send_funnel:            "/reports/campaigns",
   email_engagement:       "/reports/campaigns",
   channel_breakdown:      "/reports/campaigns",
+  // Revenue Forecast — all five widgets share one cached response
+  forecast_kpis:          "/reports/sales/revenue-forecast",
+  forecast_chart:         "/reports/sales/revenue-forecast",
+  forecast_deals:         "/reports/sales/revenue-forecast",
+  forecast_risks:         "/reports/sales/revenue-forecast",
+  forecast_owners:        "/reports/sales/revenue-forecast",
 };
 
 type Renderer = (data: unknown) => React.ReactNode;
@@ -152,6 +161,119 @@ const WIDGET_RENDERERS: Record<string, Renderer> = {
       ? <DonutChart data={r.channel_breakdown} height={160} showLegend />
       : <WidgetEmpty />;
   },
+
+  // ── Revenue Forecast ────────────────────────────────────────────────────
+  forecast_kpis: (d) => {
+    const r = d as RevenueForecastReport;
+    const tiles = [
+      { label: "Weighted Pipeline", value: r.weighted_pipeline,      format: "currency" as const },
+      { label: "This Month",        value: r.forecast_this_month,    format: "currency" as const },
+      { label: "Next 3 Months",     value: r.forecast_next_3_months, format: "currency" as const },
+      { label: "Next 6 Months",     value: r.forecast_next_6_months, format: "currency" as const },
+      { label: "Open Deals",        value: r.open_deals_count,       format: "number"   as const },
+      { label: "Avg Probability",   value: +(r.avg_probability * 100).toFixed(1), format: "percent" as const },
+    ];
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {tiles.map((tile, i) => <KPICard key={i} tile={tile} />)}
+      </div>
+    );
+  },
+
+  forecast_chart: (d) => {
+    const r = d as RevenueForecastReport;
+    return r.monthly_chart?.labels?.length
+      ? <LineChart data={r.monthly_chart} height={200} showArea />
+      : <WidgetEmpty message="No forecast data for this period" />;
+  },
+
+  forecast_deals: (d) => {
+    const r = d as RevenueForecastReport;
+    const deals = (r.deal_contributions ?? []).slice(0, 8);
+    if (!deals.length) return <WidgetEmpty message="No forecast deals" />;
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-slate-700/40">
+              <th className="text-left text-slate-500 font-medium pb-2 pr-3">Deal</th>
+              <th className="text-right text-slate-500 font-medium pb-2 pr-3">Weighted</th>
+              <th className="text-right text-slate-500 font-medium pb-2 pr-3">Prob</th>
+              <th className="text-right text-slate-500 font-medium pb-2">Close</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-700/20">
+            {deals.map((deal) => (
+              <tr key={deal.deal_id} className="hover:bg-slate-700/20 transition-colors">
+                <td className="py-2 pr-3">
+                  <span className="text-slate-200 font-medium truncate block max-w-[140px]">
+                    {deal.name}
+                  </span>
+                  {deal.stage_name && (
+                    <span className="text-slate-500 text-[10px]">{deal.stage_name}</span>
+                  )}
+                </td>
+                <td className="py-2 pr-3 text-right text-indigo-300 font-semibold">
+                  {fmtKPI(deal.weighted_value, "currency")}
+                </td>
+                <td className="py-2 pr-3 text-right">
+                  <span className={
+                    deal.probability >= 0.7 ? "text-emerald-400" :
+                    deal.probability >= 0.4 ? "text-amber-400"   : "text-red-400"
+                  }>
+                    {(deal.probability * 100).toFixed(0)}%
+                  </span>
+                </td>
+                <td className="py-2 text-right text-slate-500 whitespace-nowrap">
+                  {deal.close_date
+                    ? new Date(deal.close_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+                    : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  },
+
+  forecast_risks: (d) => {
+    const r = d as RevenueForecastReport;
+    const risks = r.risk_indicators ?? [];
+    if (!risks.length) return <WidgetEmpty message="No risk indicators detected" />;
+    const style: Record<string, { wrap: string; count: string }> = {
+      critical: { wrap: "bg-red-500/10 border-red-500/30",   count: "text-red-400"   },
+      warning:  { wrap: "bg-amber-500/10 border-amber-500/30", count: "text-amber-400" },
+      info:     { wrap: "bg-slate-800/60 border-slate-700/40", count: "text-slate-400" },
+    };
+    return (
+      <div className="flex flex-col gap-2">
+        {risks.map((risk, i) => {
+          const s = style[risk.severity] ?? style.info;
+          return (
+            <div key={i} className={`flex items-center justify-between rounded-lg px-3 py-2.5 border ${s.wrap}`}>
+              <p className="text-xs text-slate-200 font-medium leading-snug">{risk.label}</p>
+              <span className={`text-lg font-bold ml-3 flex-shrink-0 ${s.count}`}>{risk.count}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  },
+
+  forecast_owners: (d) => {
+    const r = d as RevenueForecastReport;
+    const rows = (r.owner_breakdown ?? []).map((o, i) => ({
+      label:    o.owner_name,
+      value:    o.weighted_value,
+      subValue: o.open_deals_count,
+      subLabel: "deals:",
+      color:    chartColor(i),
+    }));
+    if (!rows.length) return <WidgetEmpty message="No owner data" />;
+    const max = Math.max(...rows.map((row) => row.value), 1);
+    return <HorizontalBars rows={rows} maxValue={max} showRank />;
+  },
 };
 
 // ── Widget catalog ─────────────────────────────────────────────────────────
@@ -198,6 +320,18 @@ const CATALOG = [
       { widget_id: "send_funnel",       type: "funnel", title: "Send Pipeline",    report_source: "campaigns" },
       { widget_id: "email_engagement",  type: "bar",    title: "Email Engagement", report_source: "campaigns" },
       { widget_id: "channel_breakdown", type: "donut",  title: "Channel Breakdown",report_source: "campaigns" },
+    ],
+  },
+  {
+    group: "Revenue Forecast",
+    color: "#6366f1",
+    icon: TrendingUp,
+    widgets: [
+      { widget_id: "forecast_kpis",   type: "kpi",      title: "Forecast KPIs",      report_source: "revenue_forecast" },
+      { widget_id: "forecast_chart",  type: "line",     title: "Forecast by Month",  report_source: "revenue_forecast" },
+      { widget_id: "forecast_deals",  type: "table",    title: "Top Forecast Deals", report_source: "revenue_forecast" },
+      { widget_id: "forecast_risks",  type: "insights", title: "Risk Insights",      report_source: "revenue_forecast" },
+      { widget_id: "forecast_owners", type: "hbar",     title: "Forecast by Owner",  report_source: "revenue_forecast" },
     ],
   },
 ];
@@ -378,7 +512,11 @@ export function CustomDashboardView({ dashboard, onBack, onLayoutSaved }: Props)
     return fn(endpointData[ep]);
   }
 
-  const isKpi = (w: DashboardWidgetConfig) => baseId(w.widget_id).endsWith("_kpis");
+  const isKpi = (w: DashboardWidgetConfig) => {
+    const id = baseId(w.widget_id);
+    // KPI rows and the forecast hero chart both benefit from full grid width
+    return id.endsWith("_kpis") || id === "forecast_chart";
+  };
 
   return (
     <>
