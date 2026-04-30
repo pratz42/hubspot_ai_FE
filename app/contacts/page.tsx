@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ContextualAskAIButton } from "@/components/chat/ContextualAskAIButton";
+import { useChatPageContext } from "@/hooks/useChatContext";
 import API from "@/lib/api";
 import { Pagination } from "@/components/pagination";
 
@@ -169,6 +171,16 @@ const BLANK = {
 const PER_PAGE = 25;
 
 export default function ContactsPage() {
+  useChatPageContext({
+    page: "contacts",
+    entity_type: "contact",
+    suggested_prompts: [
+      "Summarize top contacts",
+      "Suggest best next actions",
+      "Identify cross-sell opportunities",
+    ],
+  });
+
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -422,6 +434,19 @@ export default function ContactsPage() {
           <p className="text-sm text-slate-500 mt-0.5">{total} contacts · sorted by AI priority</p>
         </div>
         <div className="flex items-center gap-2">
+          <ContextualAskAIButton
+            variant="compact"
+            label="Ask AI"
+            context={{
+              page: "contacts",
+              entity_type: "contact",
+              suggested_prompts: [
+                "Summarize top contacts",
+                "Suggest best next actions",
+                "Identify cross-sell opportunities",
+              ],
+            }}
+          />
           <Button
             variant="outline"
             size="sm"

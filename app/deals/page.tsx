@@ -39,6 +39,8 @@ import {
   Pencil,
 } from "lucide-react";
 import { EditDealDrawer } from "@/components/deals/EditDealDrawer";
+import { ContextualAskAIButton } from "@/components/chat/ContextualAskAIButton";
+import { useChatPageContext } from "@/hooks/useChatContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import API from "@/lib/api";
@@ -563,6 +565,16 @@ const kanbanCollision: CollisionDetection = (args) => {
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DealsPage() {
+  useChatPageContext({
+    page: "deals",
+    entity_type: "deal",
+    suggested_prompts: [
+      "Explain deal risk",
+      "Summarize pipeline health",
+      "What deals need attention?",
+    ],
+  });
+
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -780,6 +792,19 @@ export default function DealsPage() {
               <Upload className="w-3.5 h-3.5 mr-1.5" />
               Import CSV
             </Button>
+            <ContextualAskAIButton
+              variant="compact"
+              label="Ask AI"
+              context={{
+                page: "deals",
+                entity_type: "deal",
+                suggested_prompts: [
+                  "Explain deal risk",
+                  "Summarize pipeline health",
+                  "What deals need attention?",
+                ],
+              }}
+            />
             <Button
               size="sm"
               className="bg-orange-600 hover:bg-orange-700 h-8 text-xs font-semibold whitespace-nowrap"

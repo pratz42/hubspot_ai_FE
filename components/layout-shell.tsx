@@ -4,6 +4,9 @@ import { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { SidebarProvider, useSidebar } from "./sidebar-context";
 import { Sidebar } from "./sidebar";
+import { ChatProvider } from "@/lib/chat/context";
+import { ChatPanel } from "./chat/ChatPanel";
+import { ChatLauncherButton } from "./chat/ChatLauncherButton";
 
 function ContentWrapper({ children }: { children: ReactNode }) {
   const { collapsed } = useSidebar();
@@ -22,9 +25,13 @@ function ContentWrapper({ children }: { children: ReactNode }) {
 
 export function LayoutShell({ children }: { children: ReactNode }) {
   return (
-    <SidebarProvider>
-      <Sidebar />
-      <ContentWrapper>{children}</ContentWrapper>
-    </SidebarProvider>
+    <ChatProvider>
+      <SidebarProvider>
+        <Sidebar />
+        <ContentWrapper>{children}</ContentWrapper>
+        <ChatPanel />
+        <ChatLauncherButton />
+      </SidebarProvider>
+    </ChatProvider>
   );
 }

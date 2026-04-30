@@ -23,6 +23,8 @@ import { LeadsAIQueryBar } from "@/components/leads/LeadsAIQueryBar";
 import { SuggestedPromptChips } from "@/components/leads/SuggestedPromptChips";
 import { QueryInterpretationBanner } from "@/components/leads/QueryInterpretationBanner";
 import { QueryLoadingState } from "@/components/leads/QueryLoadingState";
+import { ContextualAskAIButton } from "@/components/chat/ContextualAskAIButton";
+import { useChatPageContext } from "@/hooks/useChatContext";
 import { QueryErrorState } from "@/components/leads/QueryErrorState";
 import type { NLQueryResponse } from "@/components/leads/nl-query-types";
 import { StageView } from "./StageView";
@@ -362,6 +364,17 @@ export default function LeadsPage() {
       }
       setSseLeadId(null);
     },
+  });
+
+  useChatPageContext({
+    page: "leads",
+    entity_type: "lead",
+    suggested_prompts: [
+      "Summarize top leads this week",
+      "Which leads need immediate follow-up?",
+      "Explain the AI scoring for leads",
+      "Draft a follow-up email for hot leads",
+    ],
   });
 
   useEffect(() => { fetchFilterOptions(); }, []);
@@ -769,6 +782,20 @@ export default function LeadsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <ContextualAskAIButton
+            variant="compact"
+            label="AI Chat"
+            context={{
+              page: "leads",
+              entity_type: "lead",
+              suggested_prompts: [
+                "Summarize top leads this week",
+                "Which leads need immediate follow-up?",
+                "Explain the AI scoring for leads",
+                "Draft a follow-up email for hot leads",
+              ],
+            }}
+          />
           <Button
             variant="ghost"
             size="sm"

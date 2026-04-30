@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useChatPageContext } from "@/hooks/useChatContext";
 import { useReportFilters } from "@/hooks/useReportFilters";
 import { useReport } from "@/hooks/useReport";
 import { ReportHeader } from "@/components/reports/ReportHeader";
@@ -29,6 +30,17 @@ import type {
 } from "@/components/reports/types";
 
 export default function ReportsPage() {
+  useChatPageContext({
+    page: "reports",
+    entity_type: "report",
+    suggested_prompts: [
+      "Explain this forecast",
+      "Summarize key trends",
+      "Find anomalies in data",
+      "What needs attention?",
+    ],
+  });
+
   const router = useRouter();
 
   const {

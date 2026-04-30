@@ -44,6 +44,8 @@ import type { CampaignSendStatus } from "@/hooks/useCampaignSendStream";
 import { LinkedInSocialCreateForm, type LinkedInSocialForm } from "@/components/campaigns/LinkedInSocialCreateForm";
 import { LinkedInSocialWorkspace, type LinkedInSocialCampaignData, type LinkedInSocialAnalysis } from "@/components/campaigns/LinkedInSocialWorkspace";
 import { LinkedInSocialStatsDrawer, type AssetStats } from "@/components/campaigns/LinkedInSocialStatsDrawer";
+import { ContextualAskAIButton } from "@/components/chat/ContextualAskAIButton";
+import { useChatPageContext } from "@/hooks/useChatContext";
 
 const DRAFT_EXISTS_STATES = new Set([
   "emails_generated", "qa_passed", "drafts_approved", "drafts_rejected",
@@ -1299,6 +1301,16 @@ function CampaignResultsBody({
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function CampaignPage() {
+  useChatPageContext({
+    page: "campaign",
+    entity_type: "campaign",
+    suggested_prompts: [
+      "Improve campaign copy",
+      "Explain campaign performance",
+      "Suggest audience improvements",
+    ],
+  });
+
   const [step, setStep] = useState<Step>("list");
   const [campaignType, setCampaignType] = useState<CampaignType>("email");
 
@@ -1763,6 +1775,19 @@ export default function CampaignPage() {
               <ArrowLeft className="w-4 h-4" /> All Campaigns
             </Button>
           )}
+          <ContextualAskAIButton
+            variant="compact"
+            label="Ask AI"
+            context={{
+              page: "campaign",
+              entity_type: "campaign",
+              suggested_prompts: [
+                "Improve campaign copy",
+                "Explain campaign performance",
+                "Suggest audience improvements",
+              ],
+            }}
+          />
           {isList && (
             <Button onClick={() => setStep("type")} className="gap-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold shadow-sm shadow-orange-200">
               <Plus className="w-4 h-4" /> New Campaign

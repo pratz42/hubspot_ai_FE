@@ -18,9 +18,11 @@ import { getErrorMessage } from "@/lib/errors";
 import { getPipelineStage } from "@/lib/pipeline";
 import { useScoreStream } from "@/hooks/useScoreStream";
 import { useStrategyBrief } from "@/hooks/useStrategyBrief";
+import { useChatPageContext } from "@/hooks/useChatContext";
 import { ScoreStatusBadge } from "@/components/ui/ScoreStatusBadge";
 import { StrategyBriefCard, StrategyBriefActionButton } from "@/components/leads/StrategyBriefCard";
 import { AISummaryCard } from "@/components/shared/AISummaryCard";
+import { ContextualAskAIButton } from "@/components/chat/ContextualAskAIButton";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -398,6 +400,19 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
 
   const brief = useStrategyBrief(lead?.id ?? null);
 
+  useChatPageContext(lead ? {
+    page: "leads",
+    entity_type: "lead",
+    entity_id: lead.id,
+    entity_name: lead.name,
+    suggested_prompts: [
+      "Summarize this lead",
+      "Explain the AI score",
+      "Draft a follow-up email",
+      "What's the best next action?",
+    ],
+  } : null);
+
   async function handleRetry() {
     if (!leadId || retrying) return;
     setRetrying(true);
@@ -566,6 +581,22 @@ export default function LeadDetail({ params }: { params: Promise<{ id: string }>
                 </Button>
               </a>
             )}
+            <ContextualAskAIButton
+              variant="compact"
+              label="Chat with AI"
+              context={{
+                page: "leads",
+                entity_type: "lead",
+                entity_id: lead.id,
+                entity_name: lead.name,
+                suggested_prompts: [
+                  "Summarize this lead",
+                  "Explain the AI score",
+                  "Draft a follow-up email",
+                  "What's the best next action?",
+                ],
+              }}
+            />
             <StrategyBriefActionButton brief={brief} scoringStatus={effectiveStatus} />
             {convertedDealId ? (
               <Link href={`/deals/${convertedDealId}`}>

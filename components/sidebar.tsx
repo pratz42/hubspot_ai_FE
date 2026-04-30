@@ -18,6 +18,7 @@ import {
   Briefcase,
   TrendingUp,
 } from "lucide-react";
+import { useChat } from "@/lib/chat/context";
 import { cn } from "@/lib/utils";
 import API from "@/lib/api";
 import { useSidebar } from "./sidebar-context";
@@ -30,12 +31,14 @@ const navigation = [
   { name: "Deals",     href: "/deals",     icon: Briefcase },
   { name: "Campaigns", href: "/campaign",  icon: Target },
   { name: "Reports",   href: "/reports",   icon: TrendingUp },
+  { name: "AI Chat",   href: "/chat",      icon: Sparkles },
   { name: "Admin",     href: "/admin",     icon: Settings, adminOnly: true },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   const { collapsed, setCollapsed } = useSidebar();
+  const { pendingApprovalsCount } = useChat();
   const [user, setUser] = useState<{ email: string; name?: string; role?: string } | null>(null);
   const [isLoadingUser, setIsLoadingUser] = useState(true);
 
@@ -151,7 +154,12 @@ export function Sidebar() {
                   )}
                 />
                 {!collapsed && <span className="flex-1">{item.name}</span>}
-                {!collapsed && isActive && (
+                {!collapsed && item.href === "/chat" && pendingApprovalsCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[9px] font-bold leading-none flex-shrink-0">
+                    {pendingApprovalsCount > 9 ? "9+" : pendingApprovalsCount}
+                  </span>
+                )}
+                {!collapsed && isActive && item.href !== "/chat" && (
                   <div className="w-1.5 h-1.5 rounded-full bg-orange-400 flex-shrink-0" />
                 )}
               </Link>

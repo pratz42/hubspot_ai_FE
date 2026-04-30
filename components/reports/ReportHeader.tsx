@@ -1,7 +1,8 @@
 "use client";
 
-import { BarChart2, Clock, Download, Plus, RefreshCw, Share2 } from "lucide-react";
+import { BarChart2, Clock, Download, Plus, RefreshCw, Share2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useChat } from "@/lib/chat/context";
 import { SECTION_META } from "./ReportNav";
 import type { ReportSection } from "@/hooks/useReportFilters";
 
@@ -29,6 +30,21 @@ export function ReportHeader({
   onCreateDashboard,
 }: Props) {
   const meta = SECTION_META[section];
+  const { openPanel, setPageContext } = useChat();
+
+  const handleAskAI = () => {
+    setPageContext({
+      page: "reports",
+      entity_type: "report",
+      suggested_prompts: [
+        "Explain this forecast",
+        "Summarize key trends",
+        "Find anomalies in data",
+        "What needs attention?",
+      ],
+    });
+    openPanel();
+  };
   const Icon = meta.icon;
 
   return (
@@ -67,6 +83,14 @@ export function ReportHeader({
               <span>Not loaded</span>
             )}
           </div>
+
+          <button
+            onClick={handleAskAI}
+            className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/20 text-violet-300 text-xs font-medium transition-colors"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Ask AI
+          </button>
 
           <Button
             variant="ghost"
