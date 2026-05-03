@@ -111,6 +111,7 @@ export function useChatSend(onThreadsRefresh?: () => void) {
             approval_required: response.approval_required,
             approval_id: response.approval_id,
             actions: response.actions,
+            choices: response.choices,
             trace: response.trace ?? traceRef.current,
             selected_tools: response.selected_tools,
           },

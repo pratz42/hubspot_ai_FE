@@ -9,7 +9,7 @@ import { renderMarkdown } from "@/lib/chat/markdown";
 import { useChat } from "@/lib/chat/context";
 import { decideChatApproval, fetchChatApproval } from "@/lib/chat/api";
 import { ChatApprovalCard } from "./ChatApprovalCard";
-import type { ChatMessage, ChatApproval, TraceStep } from "@/lib/chat/types";
+import type { ChatMessage, ChatApproval, ChatChoice, TraceStep } from "@/lib/chat/types";
 
 /* ─── helpers ─────────────────────────────────────────────────────────────── */
 
@@ -160,12 +160,50 @@ function InlineApproval({ approvalId }: { approvalId: string }) {
 
 /* ─── main component ───────────────────────────────────────────────────────── */
 
+function ChoiceList({
+  choices,
+  onChoice,
+}: {
+  choices: ChatChoice[];
+  onChoice?: (content: string) => void;
+}) {
+  if (!choices.length || !onChoice) return null;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
+      {choices.map((choice) => (
+        <button
+          key={`${choice.entity}-${choice.field}-${choice.id}`}
+          type="button"
+          onClick={() => onChoice(String(choice.index))}
+          className="w-full text-left rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2 hover:bg-violet-100 hover:border-violet-200 transition-colors focus:outline-none focus:ring-2 focus:ring-violet-400"
+        >
+          <span className="flex items-start gap-2">
+            <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-violet-600 text-[10px] font-semibold text-white">
+              {choice.index}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-xs font-semibold text-slate-800">{choice.label}</span>
+              {choice.subtitle && (
+                <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+                  {choice.subtitle}
+                </span>
+              )}
+            </span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 interface Props {
   message: ChatMessage;
   onRetry?: (content: string) => void;
+  onChoice?: (content: string) => void;
 }
 
-export function ChatMessageBubble({ message, onRetry }: Props) {
+export function ChatMessageBubble({ message, onRetry, onChoice }: Props) {
   const isUser = message.role === "user";
   const isError = message.status === "error";
   const isStreaming = message.isStreaming === true;
@@ -174,6 +212,7 @@ export function ChatMessageBubble({ message, onRetry }: Props) {
   const trace = message.metadata?.trace ?? [];
   const approvalId = message.metadata?.approval_id;
   const approvalRequired = message.metadata?.approval_required;
+  const choices = message.metadata?.choices ?? [];
   const displayed = useTypewriter(message.content, isStreaming);
 
   const senderLabel = isUser ? "You" : "AI Assistant";
@@ -270,6 +309,8 @@ export function ChatMessageBubble({ message, onRetry }: Props) {
                   </button>
                 </div>
               )}
+
+              {!isStreaming && <ChoiceList choices={choices} onChoice={onChoice} />}
 
               {/* collapsible trace */}
               {!isStreaming && trace.length > 0 && <TraceDrawer steps={trace} />}

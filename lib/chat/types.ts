@@ -14,6 +14,15 @@ export interface ChatAction {
   variant?: "default" | "destructive" | "outline";
 }
 
+export interface ChatChoice {
+  index: number;
+  entity: string;
+  field: string;
+  id: number | string;
+  label: string;
+  subtitle?: string | null;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -25,6 +34,7 @@ export interface ChatMessage {
     approval_required?: boolean;
     approval_id?: string;
     actions?: ChatAction[];
+    choices?: ChatChoice[];
     trace?: TraceStep[];
     selected_tools?: string[];
   };
@@ -101,5 +111,6 @@ export interface SupervisorResponse {
   approval_id?: string;
   approval_request_id?: string | null;
   actions?: ChatAction[];
+  choices?: ChatChoice[];
   trace?: TraceStep[];
 }
