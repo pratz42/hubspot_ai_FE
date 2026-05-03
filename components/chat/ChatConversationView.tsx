@@ -50,10 +50,10 @@ function groupByDate(messages: ChatMessage[]) {
 }
 
 const ONBOARDING_PROMPTS = [
-  { label: "Show leads needing attention", prompt: "Which leads need my attention right now?" },
+  { label: "Show leads needing attention", prompt: "Show leads needing attention." },
   { label: "Pipeline summary", prompt: "Give me a summary of my current pipeline." },
   { label: "Top deals this month", prompt: "List my top open deals this month." },
-  { label: "Recent campaign status", prompt: "What is the status of my most recent campaigns?" },
+  { label: "Recent campaign status", prompt: "List my most recent campaigns." },
   { label: "Score a lead", prompt: "Refresh the AI score for my latest lead." },
 ];
 
@@ -94,7 +94,7 @@ export function ChatConversationView({ onThreadsRefresh, hideQuickActions }: Pro
   }, [messages, isSending]);
 
   const handleSend = (content: string) => send(content);
-  const handleQuickAction = (prompt: string) => setComposerPrefill(prompt);
+  const handleQuickAction = (prompt: string) => send(prompt);
   const handleNewThread = () => { clearMessages(); setActiveThreadId(null); };
   const handleRetry = (content: string) => send(content);
 
@@ -106,6 +106,7 @@ export function ChatConversationView({ onThreadsRefresh, hideQuickActions }: Pro
         <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-slate-100">
           <p className="text-xs text-slate-500">Conversation thread</p>
           <button
+            type="button"
             onClick={handleNewThread}
             className="flex items-center gap-1 text-[11px] text-violet-600 hover:text-violet-700 transition-colors"
           >
@@ -140,8 +141,10 @@ export function ChatConversationView({ onThreadsRefresh, hideQuickActions }: Pro
                 {ONBOARDING_PROMPTS.map((p) => (
                   <button
                     key={p.prompt}
-                    onClick={() => setComposerPrefill(p.prompt)}
-                    className="px-3 py-1.5 rounded-full text-xs border border-violet-100 bg-violet-50 text-violet-700 hover:bg-violet-100 transition-colors"
+                    type="button"
+                    disabled={isSending}
+                    onClick={() => send(p.prompt)}
+                    className="px-3 py-1.5 rounded-full text-xs border border-violet-100 bg-violet-50 text-violet-700 hover:bg-violet-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {p.label}
                   </button>

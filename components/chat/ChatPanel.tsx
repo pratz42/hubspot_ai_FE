@@ -87,6 +87,7 @@ export function ChatPanel() {
               <Maximize2 className="w-3.5 h-3.5 text-slate-500" />
             </Link>
             <button
+              type="button"
               onClick={closePanel}
               aria-label="Close AI Assistant panel"
               className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center transition-colors"
@@ -101,6 +102,7 @@ export function ChatPanel() {
           {TABS.map(({ id, label, Icon }) => (
             <button
               key={id}
+              type="button"
               onClick={() => setActiveView(id)}
               className={cn(
                 "flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors relative",

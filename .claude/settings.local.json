@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"c:/Users/Pratyush.Thakur/Downloads/hubspot_cln/Hubspot_AI_Frontend\" status --short)",
+      "Bash(git -C \"c:/Users/Pratyush.Thakur/Downloads/hubspot_cln/Hubspot_AI_Frontend\" branch --show-current)",
+      "Bash(git -C \"c:/Users/Pratyush.Thakur/Downloads/hubspot_cln/Hubspot_AI_Frontend\" ls-files components/chat/)"
+    ]
+  }
+}

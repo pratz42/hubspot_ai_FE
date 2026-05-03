@@ -6,10 +6,10 @@ import type { PageContext } from "@/lib/chat/types";
 const PAGE_DEFAULTS: Record<string, string[]> = {
   leads: ["Summarize this lead", "Explain AI score", "Draft a follow-up email"],
   contacts: ["Summarize contact", "Suggest best next action", "Identify cross-sell opportunities"],
-  deals: ["Explain deal risk", "Summarize next steps", "What's blocking this deal?"],
-  campaign: ["Improve campaign copy", "Explain performance metrics", "Suggest audience improvements"],
+  deals: ["List my top open deals this month", "Summarize next steps", "What's blocking this deal?"],
+  campaign: ["List my most recent campaigns", "Improve campaign copy", "Explain performance metrics"],
   reports: ["Explain this forecast", "Summarize key trends", "Find anomalies in data"],
-  dashboard: ["What needs attention today?", "Summarize pipeline health", "Top priority actions"],
+  dashboard: ["Show leads needing attention", "List my top open deals this month", "List my most recent campaigns"],
 };
 
 interface Props {
@@ -37,6 +37,7 @@ export function ChatQuickActions({ pageContext, onAction }: Props) {
         {prompts.map((prompt) => (
           <button
             key={prompt}
+            type="button"
             onClick={() => onAction(prompt)}
             className="px-2.5 py-1 rounded-full border border-violet-200 bg-violet-50 text-xs text-violet-700 hover:bg-violet-100 hover:border-violet-300 transition-colors leading-tight"
           >
