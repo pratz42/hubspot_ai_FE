@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
-import { Settings2, Save, Loader2, CheckCircle2 } from "lucide-react";
+import { Settings2, Loader2, CheckCircle2 } from "lucide-react";
 import { useChatPreferences } from "@/hooks/useChatPreferences";
 import type { ChatPreferences } from "@/lib/chat/types";
 
-function PreferenceSelect<K extends keyof ChatPreferences>({
+function PreferenceSelect<T extends string>({
   label,
   description,
   value,
@@ -15,9 +15,9 @@ function PreferenceSelect<K extends keyof ChatPreferences>({
 }: {
   label: string;
   description: string;
-  value: ChatPreferences[K];
-  options: { value: ChatPreferences[K]; label: string }[];
-  onChange: (v: ChatPreferences[K]) => void;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
   disabled?: boolean;
 }) {
   return (
@@ -28,7 +28,7 @@ function PreferenceSelect<K extends keyof ChatPreferences>({
       </div>
       <select
         value={value as string}
-        onChange={(e) => onChange(e.target.value as ChatPreferences[K])}
+        onChange={(e) => onChange(e.target.value as T)}
         disabled={disabled}
         className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-violet-400/40 focus:border-violet-300 disabled:opacity-60"
       >
@@ -85,6 +85,7 @@ const DEFAULTS: ChatPreferences = {
   response_length: "balanced",
   approval_strictness: "smart",
   show_contextual_suggestions: true,
+  deep_analysis: false,
 };
 
 export function ChatPreferencesPanel() {
@@ -181,6 +182,14 @@ export function ChatPreferencesPanel() {
             description="Show quick action suggestions based on the current page"
             checked={prefs.show_contextual_suggestions}
             onChange={(v) => update("show_contextual_suggestions", v)}
+            disabled={isSaving}
+          />
+
+          <PreferenceToggle
+            label="Deep Analysis Mode"
+            description="Allow the AI to run up to 6 tool steps per request (slower but more thorough)"
+            checked={prefs.deep_analysis ?? false}
+            onChange={(v) => update("deep_analysis", v)}
             disabled={isSaving}
           />
         </div>

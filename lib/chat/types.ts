@@ -1,6 +1,12 @@
 export type MessageRole = "user" | "assistant";
-export type ApprovalStatus = "pending" | "approved" | "rejected";
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "executed" | "failed";
 export type ChatPanelView = "chat" | "threads" | "approvals";
+
+export interface TraceStep {
+  node: string;
+  summary: string;
+  tool?: string | null;
+}
 
 export interface ChatAction {
   label: string;
@@ -14,10 +20,13 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   status?: "sending" | "sent" | "error";
+  isStreaming?: boolean;
   metadata?: {
     approval_required?: boolean;
     approval_id?: string;
     actions?: ChatAction[];
+    trace?: TraceStep[];
+    selected_tools?: string[];
   };
 }
 
@@ -39,10 +48,16 @@ export interface ChatApproval {
   thread_id?: string;
   title: string;
   description: string;
+  tool?: string;
+  reason?: string;
+  arguments?: Record<string, unknown>;
   action_type?: string;
   context?: Record<string, unknown>;
   status: ApprovalStatus;
   created_at: string;
+  requested_at?: string;
+  decided_at?: string;
+  decided_by?: string;
   resolved_at?: string;
   resolved_by?: string;
 }
@@ -52,6 +67,7 @@ export interface ChatPreferences {
   response_length: "brief" | "detailed" | "balanced";
   approval_strictness: "always_ask" | "smart" | "auto_approve";
   show_contextual_suggestions: boolean;
+  deep_analysis?: boolean;
 }
 
 export interface PageContext {
@@ -66,14 +82,24 @@ export interface SupervisorRequest {
   message: string;
   thread_id?: string;
   context?: Partial<PageContext>;
+  history?: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+  max_steps?: number;
 }
 
 export interface SupervisorResponse {
   thread_id: string;
   message: string;
+  reply?: string;
+  status?: "completed" | "needs_input" | "awaiting_approval" | "error";
+  workflow?: string | null;
+  missing_fields?: string[];
+  selected_tools?: string[];
+  memory?: Record<string, unknown>;
   role?: MessageRole;
   timestamp?: string;
   approval_required?: boolean;
   approval_id?: string;
+  approval_request_id?: string | null;
   actions?: ChatAction[];
+  trace?: TraceStep[];
 }

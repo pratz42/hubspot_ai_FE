@@ -57,10 +57,11 @@ export function ChatPanel() {
         onClick={handleBackdropClick}
       />
 
-      {/* Panel */}
+      {/* Panel — uses 100dvh on mobile so the panel doesn't overlap the keyboard */}
       <div
         className={cn(
-          "fixed top-0 right-0 h-full w-full sm:w-[420px] z-40",
+          "fixed top-0 right-0 w-full sm:w-[420px] z-40",
+          "h-[100dvh] sm:h-full",
           "bg-white shadow-2xl border-l border-slate-100 flex flex-col",
           "transition-transform duration-300 ease-in-out",
           isPanelOpen ? "translate-x-0" : "translate-x-full"

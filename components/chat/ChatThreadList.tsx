@@ -17,7 +17,7 @@ interface Props {
 
 export function ChatThreadList({ compact, refreshKey, onThreadSelect }: Props) {
   const { activeThreadId, setActiveThreadId, clearMessages } = useChat();
-  const { state, load, search, setSearch, filteredThreads } = useChatThreads();
+  const { state, load, search, setSearch, filteredThreads, hasMore, loadMore } = useChatThreads();
 
   useEffect(() => {
     load();
@@ -88,6 +88,15 @@ export function ChatThreadList({ compact, refreshKey, onThreadSelect }: Props) {
             onClick={() => handleSelect(thread.thread_id)}
           />
         ))}
+
+        {hasMore && (
+          <button
+            onClick={loadMore}
+            className="w-full py-2 text-xs text-violet-600 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-colors mt-1"
+          >
+            Load more
+          </button>
+        )}
       </div>
     </div>
   );

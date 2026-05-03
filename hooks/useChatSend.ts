@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback } from "react";
-import { sendChatMessage } from "@/lib/chat/api";
+import { useCallback, useRef, useEffect } from "react";
+import { streamChatMessage } from "@/lib/chat/api";
 import { getErrorMessage } from "@/lib/errors";
 import { useChat } from "@/lib/chat/context";
-import type { ChatMessage, PageContext } from "@/lib/chat/types";
+import { useChatPreferences } from "@/hooks/useChatPreferences";
+import type { ChatMessage, PageContext, TraceStep } from "@/lib/chat/types";
 
 function generateId() {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -19,13 +20,31 @@ export function useChatSend(onThreadsRefresh?: () => void) {
     isSending,
     setIsSending,
     pageContext,
+    abortControllerRef,
   } = useChat();
+
+  const { state: prefState, load: loadPrefs } = useChatPreferences();
+  const prefs = prefState.phase === "done" || prefState.phase === "saved" ? prefState.preferences : null;
+
+  // Auto-load preferences once on mount so deep_analysis is respected
+  useEffect(() => {
+    if (prefState.phase === "idle") loadPrefs();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Accumulate trace steps during streaming without triggering re-renders on every step
+  const traceRef = useRef<TraceStep[]>([]);
 
   const send = useCallback(
     async (content: string, contextOverride?: Partial<PageContext>) => {
       if (!content.trim() || isSending) return;
 
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+      traceRef.current = [];
+
       const userMsgId = generateId();
+      const assistantMsgId = generateId();
+
       const userMsg: ChatMessage = {
         id: userMsgId,
         role: "user",
@@ -37,6 +56,17 @@ export function useChatSend(onThreadsRefresh?: () => void) {
       addMessage(userMsg);
       setIsSending(true);
 
+      // Placeholder assistant bubble — shows trace steps as they arrive
+      addMessage({
+        id: assistantMsgId,
+        role: "assistant",
+        content: "",
+        timestamp: new Date().toISOString(),
+        status: "sending",
+        isStreaming: true,
+        metadata: { trace: [] },
+      });
+
       try {
         const ctx = contextOverride ?? (pageContext
           ? {
@@ -46,11 +76,24 @@ export function useChatSend(onThreadsRefresh?: () => void) {
             }
           : undefined);
 
-        const response = await sendChatMessage({
-          message: content.trim(),
-          ...(activeThreadId ? { thread_id: activeThreadId } : {}),
-          ...(ctx ? { context: ctx } : {}),
-        });
+        const maxSteps = prefs?.deep_analysis ? 6 : 3;
+
+        const response = await streamChatMessage(
+          {
+            message: content.trim(),
+            ...(activeThreadId ? { thread_id: activeThreadId } : {}),
+            ...(ctx ? { context: ctx } : {}),
+            max_steps: maxSteps,
+          },
+          (step: TraceStep) => {
+            traceRef.current = [...traceRef.current, step];
+            // Update the streaming bubble with the latest trace steps
+            updateMessage(assistantMsgId, {
+              metadata: { trace: traceRef.current },
+            });
+          },
+          controller.signal,
+        );
 
         updateMessage(userMsgId, { status: "sent" });
 
@@ -58,30 +101,40 @@ export function useChatSend(onThreadsRefresh?: () => void) {
           setActiveThreadId(response.thread_id);
         }
 
-        addMessage({
-          id: generateId(),
-          role: "assistant",
+        // Replace the streaming placeholder with the final response
+        updateMessage(assistantMsgId, {
           content: response.message,
           timestamp: response.timestamp ?? new Date().toISOString(),
           status: "sent",
+          isStreaming: false,
           metadata: {
             approval_required: response.approval_required,
             approval_id: response.approval_id,
             actions: response.actions,
+            trace: response.trace ?? traceRef.current,
+            selected_tools: response.selected_tools,
           },
         });
 
         onThreadsRefresh?.();
-      } catch (err) {
-        updateMessage(userMsgId, { status: "error" });
-        addMessage({
-          id: generateId(),
-          role: "assistant",
-          content: getErrorMessage(err, "Something went wrong. Please try again."),
-          timestamp: new Date().toISOString(),
-          status: "error",
-        });
+      } catch (err: unknown) {
+        if ((err as Error)?.name === "AbortError") {
+          updateMessage(userMsgId, { status: "error" });
+          updateMessage(assistantMsgId, {
+            content: "Request cancelled.",
+            status: "error",
+            isStreaming: false,
+          });
+        } else {
+          updateMessage(userMsgId, { status: "error" });
+          updateMessage(assistantMsgId, {
+            content: getErrorMessage(err, "Something went wrong. Please try again."),
+            status: "error",
+            isStreaming: false,
+          });
+        }
       } finally {
+        abortControllerRef.current = null;
         setIsSending(false);
       }
     },
@@ -93,6 +146,8 @@ export function useChatSend(onThreadsRefresh?: () => void) {
       isSending,
       setIsSending,
       pageContext,
+      abortControllerRef,
+      prefs,
       onThreadsRefresh,
     ]
   );

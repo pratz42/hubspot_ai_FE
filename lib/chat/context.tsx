@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, { createContext, useContext, useState, useCallback, useRef } from "react";
 import type { ChatMessage, PageContext, ChatPanelView } from "./types";
 
 interface ChatStore {
@@ -28,6 +28,10 @@ interface ChatStore {
   setIsSending: (v: boolean) => void;
   setIsLoadingThread: (v: boolean) => void;
   clearPrefill: () => void;
+  /** Call to abort the in-flight SSE request. */
+  abortSend: () => void;
+  /** Ref that holds the current AbortController — set by useChatSend. */
+  abortControllerRef: React.MutableRefObject<AbortController | null>;
 }
 
 const ChatContext = createContext<ChatStore | null>(null);
@@ -43,6 +47,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const [prefillMessage, setPrefillMessage] = useState("");
 
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const openPanel = useCallback((prefill?: string) => {
     setIsPanelOpen(true);
     setActiveView("chat");
@@ -52,7 +58,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const closePanel = useCallback(() => setIsPanelOpen(false), []);
   const togglePanel = useCallback(() => setIsPanelOpen((v) => !v), []);
 
-  // Always clear messages when switching threads to prevent flicker
   const setActiveThreadId = useCallback((id: string | null) => {
     setActiveThreadIdState(id);
     setMessages([]);
@@ -69,6 +74,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   const clearMessages = useCallback(() => setMessages([]), []);
   const clearPrefill = useCallback(() => setPrefillMessage(""), []);
+
+  const abortSend = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  }, []);
 
   return (
     <ChatContext.Provider
@@ -96,6 +106,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         setIsSending,
         setIsLoadingThread,
         clearPrefill,
+        abortSend,
+        abortControllerRef,
       }}
     >
       {children}

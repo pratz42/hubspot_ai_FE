@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, useRef, useEffect, KeyboardEvent } from "react";
-import { Send, MapPin, X } from "lucide-react";
+import { Send, MapPin, X, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PageContext } from "@/lib/chat/types";
 
 interface Props {
   onSend: (message: string) => void;
+  onStop?: () => void;
   disabled?: boolean;
+  isSending?: boolean;
   placeholder?: string;
   prefill?: string;
   onPrefillClear?: () => void;
@@ -24,7 +26,9 @@ const ENTITY_LABELS: Record<string, string> = {
 
 export function ChatComposer({
   onSend,
+  onStop,
   disabled,
+  isSending,
   placeholder,
   prefill,
   onPrefillClear,
@@ -57,13 +61,17 @@ export function ChatComposer({
 
   const handleSend = () => {
     const trimmed = value.trim();
-    if (!trimmed || disabled) return;
+    if (!trimmed || disabled || isSending) return;
     onSend(trimmed);
     setValue("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
     setTimeout(() => textareaRef.current?.focus(), 0);
+  };
+
+  const handleStop = () => {
+    onStop?.();
   };
 
   const contextLabel = pageContext
@@ -90,17 +98,17 @@ export function ChatComposer({
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={disabled}
-            placeholder={placeholder ?? "Ask anything about your CRM…"}
+            disabled={disabled || isSending}
+            placeholder={isSending ? "AI is thinking…" : (placeholder ?? "Ask anything about your CRM…")}
             rows={1}
             className={cn(
               "w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900",
               "placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/40 focus:border-violet-300",
               "transition-colors leading-relaxed min-h-[40px] max-h-[140px]",
-              disabled && "opacity-50 cursor-not-allowed"
+              (disabled || isSending) && "opacity-50 cursor-not-allowed"
             )}
           />
-          {value && !disabled && (
+          {value && !disabled && !isSending && (
             <button
               onClick={() => setValue("")}
               aria-label="Clear message"
@@ -111,22 +119,33 @@ export function ChatComposer({
           )}
         </div>
 
-        <button
-          onClick={handleSend}
-          disabled={!value.trim() || disabled}
-          className={cn(
-            "w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-150",
-            value.trim() && !disabled
-              ? "bg-violet-600 text-white shadow-sm hover:bg-violet-700 active:scale-95"
-              : "bg-slate-100 text-slate-400 cursor-not-allowed"
-          )}
-        >
-          <Send className="w-4 h-4" />
-        </button>
+        {isSending ? (
+          <button
+            onClick={handleStop}
+            aria-label="Stop generation"
+            title="Stop"
+            className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-red-50 hover:bg-red-100 border border-red-200 text-red-500 transition-all duration-150 active:scale-95"
+          >
+            <Square className="w-3.5 h-3.5 fill-current" />
+          </button>
+        ) : (
+          <button
+            onClick={handleSend}
+            disabled={!value.trim() || disabled}
+            className={cn(
+              "w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-150",
+              value.trim() && !disabled
+                ? "bg-violet-600 text-white shadow-sm hover:bg-violet-700 active:scale-95"
+                : "bg-slate-100 text-slate-400 cursor-not-allowed"
+            )}
+          >
+            <Send className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       <p className="px-4 pb-2 text-[10px] text-slate-400">
-        Enter to send · Shift+Enter for new line
+        {isSending ? "Generating response…" : "Enter to send · Shift+Enter for new line"}
       </p>
     </div>
   );

@@ -48,7 +48,9 @@ export function ChatApprovalCard({ approval, onDecide, deciding }: Props) {
   const statusConfig = {
     pending: { color: "amber", label: "Pending Review", icon: Clock },
     approved: { color: "emerald", label: "Approved", icon: CheckCircle },
+    executed: { color: "emerald", label: "Executed", icon: CheckCircle },
     rejected: { color: "red", label: "Rejected", icon: XCircle },
+    failed: { color: "red", label: "Failed", icon: XCircle },
   }[approval.status];
 
   return (
