@@ -158,14 +158,47 @@ function InlineApproval({ approvalId }: { approvalId: string }) {
   );
 }
 
+/* ─── action/choice buttons ────────────────────────────────────────────────── */
+
+function ActionButtons({
+  actions,
+  onChoice,
+}: {
+  actions: NonNullable<ChatMessage["metadata"]>["actions"];
+  onChoice: (content: string) => void;
+}) {
+  if (!actions?.length) return null;
+  return (
+    <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-100">
+      {actions.map((a, i) => (
+        <button
+          key={i}
+          onClick={() => onChoice(a.action)}
+          className={cn(
+            "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
+            a.variant === "destructive"
+              ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+              : a.variant === "outline"
+              ? "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+          )}
+        >
+          {a.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /* ─── main component ───────────────────────────────────────────────────────── */
 
 interface Props {
   message: ChatMessage;
   onRetry?: (content: string) => void;
+  onChoice?: (content: string) => void;
 }
 
-export function ChatMessageBubble({ message, onRetry }: Props) {
+export function ChatMessageBubble({ message, onRetry, onChoice }: Props) {
   const isUser = message.role === "user";
   const isError = message.status === "error";
   const isStreaming = message.isStreaming === true;
@@ -273,6 +306,11 @@ export function ChatMessageBubble({ message, onRetry }: Props) {
 
               {/* collapsible trace */}
               {!isStreaming && trace.length > 0 && <TraceDrawer steps={trace} />}
+
+              {/* action / choice buttons */}
+              {!isStreaming && onChoice && message.metadata?.actions && (
+                <ActionButtons actions={message.metadata.actions} onChoice={onChoice} />
+              )}
             </div>
           )}
         </div>
