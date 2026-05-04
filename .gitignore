@@ -4,6 +4,7 @@ node_modules/
 out/
 build/
 .next-env.d.ts
+tsconfig.tsbuildinfo
 
 # --- AI Secrets & API Keys (CRITICAL) ---
 # Never commit your OpenAI, Anthropic, or Pinecone keys!
