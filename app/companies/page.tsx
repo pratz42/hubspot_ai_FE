@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
 import {
   Search,
-  Building2,
+  Building2 ,
   Globe,
   Phone,
   Plus,
