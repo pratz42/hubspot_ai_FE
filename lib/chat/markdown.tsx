@@ -2,7 +2,7 @@ import React from "react";
 
 function renderInline(text: string | null | undefined): React.ReactNode {
   if (!text) return null;
-  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g);
   return (
     <>
       {parts.map((part, i) => {
@@ -22,6 +22,17 @@ function renderInline(text: string | null | undefined): React.ReactNode {
             >
               {part.slice(1, -1)}
             </code>
+          );
+        const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+        if (linkMatch)
+          return (
+            <a
+              key={i}
+              href={linkMatch[2]}
+              className="text-violet-600 underline underline-offset-2 hover:text-violet-800 transition-colors"
+            >
+              {linkMatch[1]}
+            </a>
           );
         return <React.Fragment key={i}>{part}</React.Fragment>;
       })}

@@ -175,7 +175,7 @@ function ChoiceList({
         <button
           key={`${choice.entity}-${choice.field}-${choice.id}`}
           type="button"
-          onClick={() => onChoice(String(choice.index))}
+          onClick={() => onChoice(choice.action ?? String(choice.index))}
           className="w-full text-left rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2 hover:bg-violet-100 hover:border-violet-200 transition-colors focus:outline-none focus:ring-2 focus:ring-violet-400"
         >
           <span className="flex items-start gap-2">

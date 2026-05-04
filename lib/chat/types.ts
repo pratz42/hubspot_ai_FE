@@ -21,6 +21,8 @@ export interface ChatChoice {
   id: number | string;
   label: string;
   subtitle?: string | null;
+  /** When present, send this full text to the chat instead of the numeric index. */
+  action?: string;
 }
 
 export interface ChatMessage {
