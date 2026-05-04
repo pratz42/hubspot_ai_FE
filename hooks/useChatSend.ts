@@ -98,7 +98,7 @@ export function useChatSend(onThreadsRefresh?: () => void) {
         updateMessage(userMsgId, { status: "sent" });
 
         if (response.thread_id && response.thread_id !== activeThreadId) {
-          setActiveThreadId(response.thread_id);
+          setActiveThreadId(response.thread_id, { skipClear: true });
         }
 
         // Replace the streaming placeholder with the final response

@@ -18,7 +18,7 @@ interface ChatStore {
   closePanel: () => void;
   togglePanel: () => void;
   setActiveView: (view: ChatPanelView) => void;
-  setActiveThreadId: (id: string | null) => void;
+  setActiveThreadId: (id: string | null, opts?: { skipClear?: boolean }) => void;
   addMessage: (msg: ChatMessage) => void;
   updateMessage: (id: string, updates: Partial<ChatMessage>) => void;
   setMessages: (msgs: ChatMessage[]) => void;
@@ -58,9 +58,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const closePanel = useCallback(() => setIsPanelOpen(false), []);
   const togglePanel = useCallback(() => setIsPanelOpen((v) => !v), []);
 
-  const setActiveThreadId = useCallback((id: string | null) => {
+  const setActiveThreadId = useCallback((id: string | null, opts?: { skipClear?: boolean }) => {
     setActiveThreadIdState(id);
-    setMessages([]);
+    if (!opts?.skipClear) setMessages([]);
     setIsLoadingThread(false);
   }, []);
 
