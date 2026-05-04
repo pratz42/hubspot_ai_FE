@@ -97,6 +97,7 @@ export function ChatConversationView({ onThreadsRefresh, hideQuickActions }: Pro
   const handleQuickAction = (prompt: string) => setComposerPrefill(prompt);
   const handleNewThread = () => { clearMessages(); setActiveThreadId(null); };
   const handleRetry = (content: string) => send(content);
+  const handleChoice = (content: string) => send(content);
 
   const isEmpty = messages.length === 0 && !isSending && !isLoadingThread;
 
@@ -159,6 +160,7 @@ export function ChatConversationView({ onThreadsRefresh, hideQuickActions }: Pro
                     key={msg.id}
                     message={msg}
                     onRetry={msg.role === "user" ? handleRetry : undefined}
+                    onChoice={msg.role === "assistant" ? handleChoice : undefined}
                   />
                 ))}
               </div>

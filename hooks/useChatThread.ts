@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { fetchChatThread } from "@/lib/chat/api";
 import { getErrorMessage } from "@/lib/errors";
 import { useChat } from "@/lib/chat/context";
 
 export function useChatThread() {
-  const { activeThreadId, setMessages, setIsLoadingThread } = useChat();
+  const { activeThreadId, setMessages, setIsLoadingThread, messages } = useChat();
 
   const loadThread = useCallback(
     async (threadId: string) => {
@@ -23,10 +23,35 @@ export function useChatThread() {
     [setMessages, setIsLoadingThread]
   );
 
+  // Keep a ref to the latest messages length so we can read it inside the effect
+  // without adding `messages` to the dependency array (which would cause infinite loops).
+  const messagesLenRef = useRef(messages.length);
   useEffect(() => {
-    if (activeThreadId) {
-      loadThread(activeThreadId);
+    messagesLenRef.current = messages.length;
+  }, [messages]);
+
+  // Track the last thread ID we actually fetched to avoid duplicate fetches.
+  const fetchedThreadIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!activeThreadId) {
+      fetchedThreadIdRef.current = null;
+      return;
     }
+    // Already fetched this thread in this session — skip.
+    if (fetchedThreadIdRef.current === activeThreadId) return;
+
+    // If there are already local messages the thread was just created by useChatSend
+    // (the streaming response built the conversation in memory). Re-fetching would
+    // clobber the local state and show a jarring skeleton flash. Skip the fetch and
+    // just record this thread as "loaded".
+    if (messagesLenRef.current > 0) {
+      fetchedThreadIdRef.current = activeThreadId;
+      return;
+    }
+
+    fetchedThreadIdRef.current = activeThreadId;
+    loadThread(activeThreadId);
   }, [activeThreadId, loadThread]);
 
   return { loadThread };
