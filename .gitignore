@@ -1,0 +1,46 @@
+# --- Next.js / Node ---
+node_modules/
+.next/
+out/
+build/
+.next-env.d.ts
+tsconfig.tsbuildinfo
+
+# --- AI Secrets & API Keys (CRITICAL) ---
+# Never commit your OpenAI, Anthropic, or Pinecone keys!
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# --- Agentic AI / RAG Artifacts ---
+# Local vector store data (e.g., ChromaDB, LanceDB, FAISS)
+**/storage/
+**/vector_store/
+*.db
+*.sqlite
+
+# Cached LLM responses or agent logs
+.cache/
+logs/
+*.log
+agent_trace.json
+
+# If using Python-based agents/tools (e.g., LangGraph, CrewAI)
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# --- IDE & System ---
+.vscode/
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
